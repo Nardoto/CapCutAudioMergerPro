@@ -5,6 +5,53 @@ const http = require('node:http');
 const url = require('node:url');
 const { execSync } = require('node:child_process');
 
+// Settings file path
+const settingsPath = path.join(app.getPath('userData'), 'settings.json');
+
+// Load settings
+function loadSettings() {
+  try {
+    if (fs.existsSync(settingsPath)) {
+      return JSON.parse(fs.readFileSync(settingsPath, 'utf-8'));
+    }
+  } catch (e) { console.error('Error loading settings:', e); }
+  return {};
+}
+
+// Save settings
+function saveSettings(settings) {
+  try {
+    fs.writeFileSync(settingsPath, JSON.stringify(settings, null, 2));
+  } catch (e) { console.error('Error saving settings:', e); }
+}
+
+// Helper to extract text from CapCut material content
+function extractTextFromContent(content) {
+  if (!content) return '';
+  // If it's a simple string, return it
+  if (typeof content === 'string') {
+    // Try to parse as JSON (CapCut stores text content as JSON)
+    try {
+      const parsed = JSON.parse(content);
+      // CapCut text format: {"text": "actual text"} or nested structures
+      if (parsed.text) return parsed.text;
+      // Sometimes it's in styles array
+      if (parsed.styles && Array.isArray(parsed.styles)) {
+        // Look for text in various places
+        for (const style of parsed.styles) {
+          if (style.text) return style.text;
+        }
+      }
+      // Return empty if it's just style data with no text
+      return '';
+    } catch {
+      // Not JSON, return as is (might be plain text)
+      return content.substring(0, 50);
+    }
+  }
+  return '';
+}
+
 // Helper para executar o script Python
 function runPython(command) {
   // Em dev, __dirname aponta para .webpack/main, então usamos process.cwd()
@@ -68,9 +115,11 @@ const createWindow = () => {
 // IPC Handlers
 ipcMain.handle('select-folder', async () => {
   if (!mainWindow) return null;
+  const settings = loadSettings();
   const result = await dialog.showOpenDialog(mainWindow, {
     properties: ['openDirectory'],
     title: 'Selecione a pasta do projeto CapCut',
+    defaultPath: settings.lastProjectPath || undefined,
   });
   if (result.canceled || result.filePaths.length === 0) return null;
   const folderPath = result.filePaths[0];
@@ -78,6 +127,8 @@ ipcMain.handle('select-folder', async () => {
   if (!fs.existsSync(draftContentPath)) {
     return { error: 'Arquivo draft_content.json não encontrado!' };
   }
+  // Save last path
+  saveSettings({ ...settings, lastProjectPath: path.dirname(folderPath) });
   return { path: folderPath, name: path.basename(folderPath), draftPath: draftContentPath };
 });
 
@@ -90,14 +141,15 @@ ipcMain.handle('analyze-project', async (_, draftPath) => {
 
     // Build a map of material IDs to content/names
     const materialMap = {};
-    for (const [key, matList] of Object.entries(materials)) {
+    for (const [, matList] of Object.entries(materials)) {
       if (Array.isArray(matList)) {
         matList.forEach(mat => {
           if (mat.id) {
+            // Extract actual text from content field
+            const textContent = extractTextFromContent(mat.content);
             materialMap[mat.id] = {
               name: mat.name || mat.path || '',
-              content: mat.content || '',
-              type: key
+              text: textContent,
             };
           }
         });
@@ -111,17 +163,25 @@ ipcMain.handle('analyze-project', async (_, draftPath) => {
       // Enrich segments with material info (text content, names)
       const enrichedSegments = segments.map(seg => {
         const mat = materialMap[seg.material_id] || {};
+        const materialName = mat.name ? path.basename(mat.name) : '';
         return {
           ...seg,
-          text: mat.content || '',
-          materialName: mat.name ? path.basename(mat.name) : ''
+          text: mat.text || '',
+          materialName: materialName
         };
       });
 
-      // Get track name from first segment
+      // Get track name from first segment - prefer materialName for audio/video, text for subtitles
       let name = '';
       if (enrichedSegments.length > 0) {
-        name = enrichedSegments[0].materialName || enrichedSegments[0].text?.substring(0, 30) || '';
+        const firstSeg = enrichedSegments[0];
+        if (['text', 'subtitle'].includes(track.type)) {
+          // For text/subtitle tracks, show the actual text
+          name = firstSeg.text || firstSeg.materialName || 'Texto';
+        } else {
+          // For other tracks, show material name
+          name = firstSeg.materialName || firstSeg.text || '';
+        }
       }
 
       return {
@@ -141,9 +201,11 @@ ipcMain.handle('analyze-project', async (_, draftPath) => {
 // ============ SELECT SRT FOLDER ============
 ipcMain.handle('select-srt-folder', async () => {
   if (!mainWindow) return null;
+  const settings = loadSettings();
   const result = await dialog.showOpenDialog(mainWindow, {
     properties: ['openDirectory'],
     title: 'Selecione a pasta com arquivos .srt',
+    defaultPath: settings.lastSrtPath || undefined,
   });
   if (result.canceled || result.filePaths.length === 0) return null;
   const folderPath = result.filePaths[0];
@@ -153,6 +215,8 @@ ipcMain.handle('select-srt-folder', async () => {
   if (srtFiles.length === 0) {
     return { error: 'Nenhum arquivo .srt encontrado na pasta!' };
   }
+  // Save last SRT path
+  saveSettings({ ...settings, lastSrtPath: folderPath });
   return { path: folderPath, name: path.basename(folderPath), srtCount: srtFiles.length };
 });
 

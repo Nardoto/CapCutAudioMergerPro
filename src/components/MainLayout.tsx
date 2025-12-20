@@ -1,6 +1,6 @@
 import { useState } from 'react'
 import { motion, AnimatePresence } from 'framer-motion'
-import { Zap, RefreshCw, FileText, Settings, LogOut, FolderOpen, ChevronRight, Minus, Square, X } from 'lucide-react'
+import { Zap, RefreshCw, FileText, HelpCircle, LogOut, FolderOpen, ChevronRight, Minus, Square, X, Search } from 'lucide-react'
 import type { User, TrackInfo, LogEntry } from '../types'
 import TimelinePreview from './TimelinePreview'
 import SyncPanel from './panels/SyncPanel'
@@ -85,9 +85,7 @@ export default function MainLayout({ user, onLogout }: MainLayoutProps) {
       {/* Titlebar */}
       <div className="drag-region h-10 bg-background-dark-alt border-b border-border-light flex items-center justify-between px-4">
         <div className="flex items-center gap-3 no-drag">
-          <div className="w-6 h-6 rounded-md bg-cta-gradient flex items-center justify-center">
-            <span className="text-xs">⚡</span>
-          </div>
+          <img src={require('../assets/icon.png')} alt="Logo" className="w-6 h-6 rounded" />
           <span className="text-sm font-medium text-white">CapCut Sync Pro</span>
           <span className="badge text-xs py-0.5 px-2">v1.0.0</span>
         </div>
@@ -133,9 +131,13 @@ export default function MainLayout({ user, onLogout }: MainLayoutProps) {
 
           <div className="flex-1" />
 
-          <button className="w-14 h-14 rounded-xl flex flex-col items-center justify-center gap-1 hover:bg-white/5 transition-colors">
-            <Settings className="w-5 h-5 text-text-secondary" />
-            <span className="text-[10px] text-text-muted">Config</span>
+          <button
+            onClick={() => ipcRenderer?.invoke('open-external', 'https://github.com/nardoto/capcut-sync-pro')}
+            className="w-14 h-14 rounded-xl flex flex-col items-center justify-center gap-1 hover:bg-white/5 transition-colors"
+            title="Ajuda e documentação"
+          >
+            <HelpCircle className="w-5 h-5 text-text-secondary" />
+            <span className="text-[10px] text-text-muted">Ajuda</span>
           </button>
         </div>
 
@@ -161,9 +163,10 @@ export default function MainLayout({ user, onLogout }: MainLayoutProps) {
                   <button
                     onClick={handleAnalyze}
                     disabled={isLoading}
-                    className="btn-primary py-2 px-4 text-sm ml-auto"
+                    className="btn-primary py-3 px-6 text-base ml-auto flex items-center gap-2 font-bold"
                   >
-                    {isLoading ? 'Analisando...' : 'Analisar Projeto'}
+                    <Search className="w-5 h-5" />
+                    {isLoading ? 'Analisando...' : 'ANALISAR PROJETO'}
                   </button>
                 </>
               )}
