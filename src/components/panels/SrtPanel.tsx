@@ -86,8 +86,8 @@ export default function SrtPanel({ onLog, draftPath, onReanalyze }: SrtPanelProp
     <div className="p-4 space-y-6">
       {/* Header */}
       <div className="flex items-center gap-3">
-        <div className="w-10 h-10 rounded-xl bg-pink-500/20 flex items-center justify-center">
-          <FileText className="w-5 h-5 text-pink-400" />
+        <div className="w-10 h-10 rounded-xl flex items-center justify-center" style={{ backgroundColor: '#9c493730' }}>
+          <FileText className="w-5 h-5" style={{ color: '#9c4937' }} />
         </div>
         <div>
           <h2 className="text-lg font-semibold text-white">Legendas SRT</h2>
@@ -105,7 +105,7 @@ export default function SrtPanel({ onLog, draftPath, onReanalyze }: SrtPanelProp
       {/* Description */}
       <div className="p-4 rounded-xl bg-white/5 border border-border-light">
         <p className="text-sm text-text-secondary">
-          Selecione uma pasta contendo arquivos <code className="text-pink-400">.srt</code> com o mesmo nome dos áudios.
+          Selecione uma pasta contendo arquivos <code style={{ color: '#9c4937' }}>.srt</code> com o mesmo nome dos áudios.
           As legendas serão inseridas automaticamente na timeline do CapCut.
         </p>
       </div>
@@ -143,9 +143,10 @@ export default function SrtPanel({ onLog, draftPath, onReanalyze }: SrtPanelProp
             type="checkbox"
             checked={createTitle}
             onChange={(e) => setCreateTitle(e.target.checked)}
-            className="w-4 h-4 rounded border-border-light bg-white/5 text-pink-500 focus:ring-pink-500 focus:ring-offset-0"
+            className="w-4 h-4 rounded border-border-light bg-white/5 focus:ring-offset-0"
+            style={{ accentColor: '#9c4937' }}
           />
-          <BookOpen className="w-4 h-4 text-text-muted group-hover:text-pink-400 transition-colors" />
+          <BookOpen className="w-4 h-4 text-text-muted transition-colors" style={{ '--hover-color': '#9c4937' } as React.CSSProperties} />
           <span className="text-sm text-text-primary">Criar texto de título</span>
         </label>
       </div>
@@ -173,7 +174,8 @@ export default function SrtPanel({ onLog, draftPath, onReanalyze }: SrtPanelProp
       <button
         onClick={handleInsertSubtitles}
         disabled={!srtFolder || !hasProject || isProcessing}
-        className="w-full py-4 px-4 bg-pink-500 hover:bg-pink-600 text-white font-semibold rounded-xl transition-all disabled:opacity-50 disabled:cursor-not-allowed flex items-center justify-center gap-2"
+        className="w-full py-4 px-4 text-white font-semibold rounded-xl transition-all disabled:opacity-50 disabled:cursor-not-allowed flex items-center justify-center gap-2 hover:brightness-110"
+        style={{ backgroundColor: '#9c4937' }}
       >
         {isProcessing ? (
           <>

@@ -105,8 +105,8 @@ export default function LoopPanel({
     <div className="p-4 space-y-6">
       {/* Header */}
       <div className="flex items-center gap-3">
-        <div className="w-10 h-10 rounded-xl bg-blue-500/20 flex items-center justify-center">
-          <RefreshCw className="w-5 h-5 text-blue-400" />
+        <div className="w-10 h-10 rounded-xl flex items-center justify-center" style={{ backgroundColor: '#0e305830' }}>
+          <RefreshCw className="w-5 h-5" style={{ color: '#0e3058' }} />
         </div>
         <div>
           <h2 className="text-lg font-semibold text-white">Repetição (Loop)</h2>
@@ -131,7 +131,7 @@ export default function LoopPanel({
       {/* Section: Loop Video/Image */}
       <div className="space-y-4">
         <div className="flex items-center gap-2">
-          <Film className="w-4 h-4 text-blue-400" />
+          <Film className="w-4 h-4" style={{ color: '#175d62' }} />
           <span className="text-sm font-semibold text-white">REPETIR VÍDEO/IMAGEM</span>
         </div>
 
@@ -145,9 +145,10 @@ export default function LoopPanel({
             onClick={() => setOrder('sequential')}
             className={`p-3 rounded-xl border transition-all flex items-center gap-3 ${
               order === 'sequential'
-                ? 'border-blue-400 bg-blue-400/10 text-white'
+                ? 'text-white'
                 : 'border-border-light text-text-secondary hover:border-border-lighter'
             }`}
+            style={order === 'sequential' ? { borderColor: '#175d62', backgroundColor: '#175d6230' } : {}}
           >
             <ListOrdered className="w-5 h-5" />
             <span className="text-sm font-medium">Sequencial</span>
@@ -156,9 +157,10 @@ export default function LoopPanel({
             onClick={() => setOrder('random')}
             className={`p-3 rounded-xl border transition-all flex items-center gap-3 ${
               order === 'random'
-                ? 'border-blue-400 bg-blue-400/10 text-white'
+                ? 'text-white'
                 : 'border-border-light text-text-secondary hover:border-border-lighter'
             }`}
+            style={order === 'random' ? { borderColor: '#175d62', backgroundColor: '#175d6230' } : {}}
           >
             <Shuffle className="w-5 h-5" />
             <span className="text-sm font-medium">Aleatório</span>
@@ -168,7 +170,8 @@ export default function LoopPanel({
         <button
           onClick={handleLoopMedia}
           disabled={!hasProject || isProcessingVideo}
-          className="w-full py-3 px-4 bg-blue-500 hover:bg-blue-600 text-white font-semibold rounded-xl transition-all disabled:opacity-50 disabled:cursor-not-allowed flex items-center justify-center gap-2"
+          className="w-full py-3 px-4 text-white font-semibold rounded-xl transition-all disabled:opacity-50 disabled:cursor-not-allowed flex items-center justify-center gap-2 hover:brightness-110"
+          style={{ backgroundColor: '#175d62' }}
         >
           {isProcessingVideo ? (
             <>
@@ -190,7 +193,7 @@ export default function LoopPanel({
       {/* Section: Loop Audio */}
       <div className="space-y-4">
         <div className="flex items-center gap-2">
-          <Music className="w-4 h-4 text-green-400" />
+          <Music className="w-4 h-4" style={{ color: '#0e3058' }} />
           <span className="text-sm font-semibold text-white">REPETIR TRILHA MUSICAL</span>
         </div>
 
@@ -216,7 +219,8 @@ export default function LoopPanel({
         <button
           onClick={handleLoopAudio}
           disabled={audioToLoop < 0 || isProcessingAudio}
-          className="w-full py-3 px-4 bg-green-500 hover:bg-green-600 text-white font-semibold rounded-xl transition-all disabled:opacity-50 disabled:cursor-not-allowed flex items-center justify-center gap-2"
+          className="w-full py-3 px-4 text-white font-semibold rounded-xl transition-all disabled:opacity-50 disabled:cursor-not-allowed flex items-center justify-center gap-2 hover:brightness-110"
+          style={{ backgroundColor: '#0e3058' }}
         >
           {isProcessingAudio ? (
             <>

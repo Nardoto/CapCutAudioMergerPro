@@ -2,8 +2,13 @@ const { app, BrowserWindow, ipcMain, dialog, shell } = require('electron');
 const path = require('node:path');
 const fs = require('node:fs');
 const http = require('node:http');
+const https = require('node:https');
 const url = require('node:url');
-const { execSync } = require('node:child_process');
+const { execSync, spawn } = require('node:child_process');
+
+// App version
+const APP_VERSION = '2.0.0';
+const UPDATE_URL = 'https://nardoto.com.br/nardoto-updates/capcut-sync-pro-version.json';
 
 // Settings file path
 const settingsPath = path.join(app.getPath('userData'), 'settings.json');
@@ -23,6 +28,66 @@ function saveSettings(settings) {
   try {
     fs.writeFileSync(settingsPath, JSON.stringify(settings, null, 2));
   } catch (e) { console.error('Error saving settings:', e); }
+}
+
+// ============ AUTO-UPDATE SYSTEM ============
+function checkForUpdates() {
+  return new Promise((resolve) => {
+    https.get(UPDATE_URL, (res) => {
+      let data = '';
+      res.on('data', chunk => data += chunk);
+      res.on('end', () => {
+        try {
+          const updateInfo = JSON.parse(data);
+          if (updateInfo.version && updateInfo.version !== APP_VERSION) {
+            resolve({ hasUpdate: true, version: updateInfo.version, downloadUrl: updateInfo.downloadUrl, changelog: updateInfo.changelog });
+          } else {
+            resolve({ hasUpdate: false });
+          }
+        } catch (e) {
+          console.error('Error parsing update info:', e);
+          resolve({ hasUpdate: false, error: e.message });
+        }
+      });
+    }).on('error', (e) => {
+      console.error('Error checking for updates:', e);
+      resolve({ hasUpdate: false, error: e.message });
+    });
+  });
+}
+
+function downloadUpdate(downloadUrl, targetPath) {
+  return new Promise((resolve, reject) => {
+    const file = fs.createWriteStream(targetPath);
+    https.get(downloadUrl, (response) => {
+      // Handle redirects
+      if (response.statusCode === 302 || response.statusCode === 301) {
+        https.get(response.headers.location, (res) => {
+          res.pipe(file);
+          file.on('finish', () => { file.close(); resolve(true); });
+        }).on('error', reject);
+      } else {
+        response.pipe(file);
+        file.on('finish', () => { file.close(); resolve(true); });
+      }
+    }).on('error', (err) => {
+      fs.unlink(targetPath, () => {});
+      reject(err);
+    });
+  });
+}
+
+async function performUpdate(downloadUrl) {
+  const tempPath = path.join(app.getPath('temp'), 'CapCutSyncPro_Update.exe');
+  try {
+    await downloadUpdate(downloadUrl, tempPath);
+    // Launch installer and quit app
+    spawn(tempPath, ['/VERYSILENT', '/SUPPRESSMSGBOXES', '/NORESTART'], { detached: true, stdio: 'ignore' });
+    app.quit();
+    return { success: true };
+  } catch (error) {
+    return { success: false, error: error.message };
+  }
 }
 
 // Helper to extract text from CapCut material content
@@ -65,6 +130,17 @@ function runPython(command) {
 
   console.log('[Python] Script path:', pythonScript);
   console.log('[Python] Command:', command.action);
+
+  // Criar backup antes de modificar o arquivo
+  if (command.draftPath && ['sync', 'loop_video', 'loop_audio', 'insert_srt'].includes(command.action)) {
+    try {
+      const backup = command.draftPath + '.backup';
+      fs.copyFileSync(command.draftPath, backup);
+      console.log('[Backup] Created:', backup);
+    } catch (e) {
+      console.error('[Backup] Error:', e.message);
+    }
+  }
 
   try {
     const result = execSync(`python "${pythonScript}" "${cmdJson.replace(/"/g, '\\"')}"`, {
@@ -225,6 +301,17 @@ ipcMain.handle('window-maximize', () => { if (mainWindow?.isMaximized()) mainWin
 ipcMain.handle('window-close', () => mainWindow?.close());
 ipcMain.handle('open-external', async (_, url) => await shell.openExternal(url));
 
+// ============ AUTO-UPDATE HANDLERS ============
+ipcMain.handle('check-for-updates', async () => {
+  return await checkForUpdates();
+});
+
+ipcMain.handle('download-update', async (_, downloadUrl) => {
+  return await performUpdate(downloadUrl);
+});
+
+ipcMain.handle('get-app-version', () => APP_VERSION);
+
 // ============ SYNC PROJECT (via Python) ============
 ipcMain.handle('sync-project', async (_, { draftPath, audioTrackIndex, mode, syncSubtitles, applyAnimations }) => {
   return runPython({ action: 'sync', draftPath, audioTrackIndex, mode: mode || 'audio', syncSubtitles, applyAnimations });
@@ -243,6 +330,46 @@ ipcMain.handle('loop-audio', async (_, { draftPath, trackIndex, targetDuration }
 // ============ INSERT SRT (via Python) ============
 ipcMain.handle('insert-srt', async (_, { draftPath, srtFolder, createTitle }) => {
   return runPython({ action: 'insert_srt', draftPath, srtFolder, createTitle });
+});
+
+// ============ BACKUP / UNDO SYSTEM ============
+const backupPath = (draftPath) => draftPath + '.backup';
+
+ipcMain.handle('check-backup', async (_, draftPath) => {
+  try {
+    const backup = backupPath(draftPath);
+    const hasBackup = fs.existsSync(backup);
+    return { hasBackup };
+  } catch (error) {
+    return { hasBackup: false, error: error.message };
+  }
+});
+
+ipcMain.handle('undo-changes', async (_, draftPath) => {
+  try {
+    const backup = backupPath(draftPath);
+    if (!fs.existsSync(backup)) {
+      return { error: 'Nenhum backup encontrado para desfazer' };
+    }
+    // Restore backup
+    fs.copyFileSync(backup, draftPath);
+    // Remove backup after restore
+    fs.unlinkSync(backup);
+    return { success: true };
+  } catch (error) {
+    return { error: error.message };
+  }
+});
+
+// Create backup before any modification (called by Python script)
+ipcMain.handle('create-backup', async (_, draftPath) => {
+  try {
+    const backup = backupPath(draftPath);
+    fs.copyFileSync(draftPath, backup);
+    return { success: true };
+  } catch (error) {
+    return { error: error.message };
+  }
 });
 
 // Google OAuth via browser

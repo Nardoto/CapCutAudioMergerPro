@@ -1,6 +1,8 @@
 import { motion } from 'framer-motion'
-import { LogOut, ShoppingCart, AlertCircle } from 'lucide-react'
+import { LogOut, ShoppingCart, AlertCircle, UserPlus, ExternalLink } from 'lucide-react'
 import type { User } from '../types'
+
+const { ipcRenderer } = window.require ? window.require('electron') : { ipcRenderer: null }
 
 interface NoAccessProps {
   user: User
@@ -9,15 +11,22 @@ interface NoAccessProps {
 }
 
 export default function NoAccess({ user, reason, onLogout }: NoAccessProps) {
+  // Verificar se é usuário novo (sem dados no Firestore)
+  const isNewUser = !user.proActivatedBy && !user.proActivatedAt
+
+  const handleRegister = () => {
+    // Direcionar para o site de registro
+    ipcRenderer?.invoke('open-external', 'https://nardoto-labs.web.app/dashboard.html')
+  }
+
   const handleBuyAccess = () => {
-    // TODO: Open purchase page
-    window.open('https://nardoto.com/capcut-sync-pro', '_blank')
+    ipcRenderer?.invoke('open-external', 'https://nardoto.com/capcut-sync-pro')
   }
 
   return (
-    <div className="h-screen w-screen bg-hero-gradient flex items-center justify-center overflow-hidden relative">
-      {/* Background glow effect */}
-      <div className="absolute inset-0 bg-warm-glow pointer-events-none" />
+    <div className="h-screen w-screen bg-background-dark flex items-center justify-center overflow-hidden relative">
+      {/* Background gradient */}
+      <div className="absolute inset-0 bg-gradient-to-br from-primary/5 via-transparent to-primary/10 pointer-events-none" />
 
       <motion.div
         initial={{ opacity: 0, y: 20 }}
@@ -30,22 +39,28 @@ export default function NoAccess({ user, reason, onLogout }: NoAccessProps) {
           initial={{ scale: 0.8 }}
           animate={{ scale: 1 }}
           transition={{ delay: 0.2 }}
-          className="w-20 h-20 mx-auto mb-6 rounded-full bg-card-dark border border-primary/30 flex items-center justify-center"
+          className="w-20 h-20 mx-auto mb-6 rounded-full bg-background-elevated border border-primary/30 flex items-center justify-center"
         >
-          <AlertCircle className="w-10 h-10 text-primary" />
+          {isNewUser ? (
+            <UserPlus className="w-10 h-10 text-primary" />
+          ) : (
+            <AlertCircle className="w-10 h-10 text-primary" />
+          )}
         </motion.div>
 
         {/* Title */}
-        <h1 className="text-3xl font-heading text-white mb-3">
-          Acesso Restrito
+        <h1 className="text-2xl font-bold text-white mb-3">
+          {isNewUser ? 'Bem-vindo!' : 'Acesso Restrito'}
         </h1>
 
         <p className="text-text-secondary mb-6">
-          {reason || 'Você não tem acesso ao CapCut Sync Pro.'}
+          {isNewUser
+            ? 'Para usar o CapCut Sync Pro, você precisa se registrar no Nardoto Labs.'
+            : reason || 'Você não tem acesso ao CapCut Sync Pro.'}
         </p>
 
         {/* User info */}
-        <div className="card mb-6">
+        <div className="card p-4 mb-6">
           <div className="flex items-center gap-3 mb-4">
             {user.photoURL ? (
               <img
@@ -66,20 +81,32 @@ export default function NoAccess({ user, reason, onLogout }: NoAccessProps) {
 
           <div className="border-t border-border-light pt-4">
             <p className="text-text-muted text-sm">
-              Status: <span className="text-red-400 font-medium">Sem acesso PRO</span>
+              Status: <span className="text-red-400 font-medium">
+                {isNewUser ? 'Não registrado' : 'Sem acesso PRO'}
+              </span>
             </p>
           </div>
         </div>
 
         {/* Actions */}
         <div className="space-y-3">
-          <button
-            onClick={handleBuyAccess}
-            className="btn-primary w-full flex items-center justify-center gap-2"
-          >
-            <ShoppingCart className="w-5 h-5" />
-            Adquirir Acesso PRO
-          </button>
+          {isNewUser ? (
+            <button
+              onClick={handleRegister}
+              className="btn-primary w-full flex items-center justify-center gap-2"
+            >
+              <ExternalLink className="w-5 h-5" />
+              Criar Conta no Nardoto Labs
+            </button>
+          ) : (
+            <button
+              onClick={handleBuyAccess}
+              className="btn-primary w-full flex items-center justify-center gap-2"
+            >
+              <ShoppingCart className="w-5 h-5" />
+              Adquirir Acesso PRO
+            </button>
+          )}
 
           <button
             onClick={onLogout}
@@ -92,9 +119,30 @@ export default function NoAccess({ user, reason, onLogout }: NoAccessProps) {
 
         {/* Help text */}
         <p className="text-text-muted text-xs mt-6">
-          Já comprou? Aguarde alguns minutos para a ativação.
-          <br />
-          Problemas? Entre em contato pelo WhatsApp.
+          {isNewUser ? (
+            <>
+              Após criar sua conta, faça login novamente aqui.
+              <br />
+              Novos usuários ganham 10 dias de teste grátis!
+            </>
+          ) : (
+            <>
+              Já comprou? Aguarde alguns minutos para a ativação.
+              <br />
+              Problemas? Entre em contato pelo WhatsApp.
+            </>
+          )}
+        </p>
+
+        {/* Credits */}
+        <p className="text-text-muted text-[10px] mt-8">
+          Desenvolvido por{' '}
+          <button
+            onClick={() => ipcRenderer?.invoke('open-external', 'https://nardoto.com')}
+            className="text-primary hover:underline"
+          >
+            Nardoto
+          </button>
         </p>
       </motion.div>
     </div>
