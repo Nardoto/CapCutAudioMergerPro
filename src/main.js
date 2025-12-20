@@ -87,20 +87,52 @@ ipcMain.handle('analyze-project', async (_, draftPath) => {
     const project = JSON.parse(content);
     const tracks = project.tracks || [];
     const materials = project.materials || {};
+
+    // Build a map of material IDs to content/names
+    const materialMap = {};
+    for (const [key, matList] of Object.entries(materials)) {
+      if (Array.isArray(matList)) {
+        matList.forEach(mat => {
+          if (mat.id) {
+            materialMap[mat.id] = {
+              name: mat.name || mat.path || '',
+              content: mat.content || '',
+              type: key
+            };
+          }
+        });
+      }
+    }
+
     const trackInfos = tracks.map((track, index) => {
       const segments = track.segments || [];
       const duration = segments.reduce((sum, seg) => sum + (seg.target_timerange?.duration || 0), 0);
+
+      // Enrich segments with material info (text content, names)
+      const enrichedSegments = segments.map(seg => {
+        const mat = materialMap[seg.material_id] || {};
+        return {
+          ...seg,
+          text: mat.content || '',
+          materialName: mat.name ? path.basename(mat.name) : ''
+        };
+      });
+
+      // Get track name from first segment
       let name = '';
-      if (segments.length > 0) {
-        const matId = segments[0].material_id;
-        for (const [key, matList] of Object.entries(materials)) {
-          if (Array.isArray(matList)) {
-            const mat = matList.find((m) => m.id === matId);
-            if (mat) { name = mat.name || mat.path || ''; if (name) { name = path.basename(name); break; } }
-          }
-        }
+      if (enrichedSegments.length > 0) {
+        name = enrichedSegments[0].materialName || enrichedSegments[0].text?.substring(0, 30) || '';
       }
-      return { index, type: track.type, segments: segments.length, duration, durationSec: duration / 1000000, name, segmentsData: segments };
+
+      return {
+        index,
+        type: track.type,
+        segments: segments.length,
+        duration,
+        durationSec: duration / 1000000,
+        name,
+        segmentsData: enrichedSegments
+      };
     });
     return { tracks: trackInfos };
   } catch (error) { return { error: 'Erro: ' + error }; }
