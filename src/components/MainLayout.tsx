@@ -1,11 +1,12 @@
 import { useState, useEffect, useRef } from 'react'
 import { motion, AnimatePresence } from 'framer-motion'
-import { Zap, RefreshCw, FileText, HelpCircle, LogOut, FolderOpen, ChevronRight, Minus, Square, X, Download, ExternalLink, User as UserIcon, Crown, Undo2, Search, Clock, ChevronDown, Trash2, History } from 'lucide-react'
+import { Zap, RefreshCw, FileText, HelpCircle, LogOut, FolderOpen, ChevronRight, Minus, Square, X, Download, ExternalLink, User as UserIcon, Crown, Undo2, Search, Clock, ChevronDown, Trash2, History, Film, Plus, Pencil, Check } from 'lucide-react'
 import type { User, TrackInfo, LogEntry } from '../types'
 import TimelinePreview from './TimelinePreview'
 import SyncPanel from './panels/SyncPanel'
 import LoopPanel from './panels/LoopPanel'
 import SrtPanel from './panels/SrtPanel'
+import MediaPanel from './panels/MediaPanel'
 import LogConsole from './LogConsole'
 import HelpModal from './HelpModal'
 
@@ -16,7 +17,7 @@ interface MainLayoutProps {
   onLogout: () => void
 }
 
-type TabType = 'sync' | 'loop' | 'srt'
+type TabType = 'sync' | 'loop' | 'srt' | 'media'
 
 export default function MainLayout({ user, onLogout }: MainLayoutProps) {
   const [activeTab, setActiveTab] = useState<TabType>('sync')
@@ -36,6 +37,8 @@ export default function MainLayout({ user, onLogout }: MainLayoutProps) {
   const [backups, setBackups] = useState<Array<{ filename: string; displayDate: string; timestamp: number }>>([])
   const [backupCount, setBackupCount] = useState(0)
   const backupDropdownRef = useRef<HTMLDivElement>(null)
+  const [isEditingName, setIsEditingName] = useState(false)
+  const [editingName, setEditingName] = useState('')
   const [logs, setLogs] = useState<LogEntry[]>([
     { id: '1', type: 'info', message: 'CapCut Sync Pro v2.0 iniciado', timestamp: new Date() }
   ])
@@ -43,9 +46,10 @@ export default function MainLayout({ user, onLogout }: MainLayoutProps) {
 
   // Cores iguais aos elementos do CapCut
   const tabs = [
-    { id: 'sync' as const, label: 'SYNC', icon: Zap, hexColor: '#175d62' },      // Verde/Teal (vídeo)
-    { id: 'loop' as const, label: 'LOOP', icon: RefreshCw, hexColor: '#0e3058' }, // Azul escuro (áudio)
-    { id: 'srt' as const, label: 'SRT', icon: FileText, hexColor: '#9c4937' },    // Marrom (legenda)
+    { id: 'sync' as const, label: 'SYNC', icon: Zap, hexColor: '#175d62' },           // Verde/Teal (vídeo)
+    { id: 'loop' as const, label: 'LOOP', icon: RefreshCw, hexColor: '#175d62' },     // Verde (loop)
+    { id: 'srt' as const, label: 'SRT', icon: FileText, hexColor: '#9c4937' },        // Marrom (legenda)
+    { id: 'media' as const, label: 'MÍDIA', icon: Film, hexColor: '#6b21a8' },        // Roxo (mídia)
   ]
 
   // Calcular dias restantes de trial
@@ -268,6 +272,67 @@ export default function MainLayout({ user, onLogout }: MainLayoutProps) {
     }
   }
 
+  // Renomear projeto
+  const handleRenameProject = async () => {
+    if (!projectPath || !ipcRenderer || !editingName.trim()) {
+      setIsEditingName(false)
+      return
+    }
+
+    const newName = editingName.trim()
+    if (newName === projectName) {
+      setIsEditingName(false)
+      return
+    }
+
+    addLog('info', `Renomeando projeto para "${newName}"...`)
+
+    try {
+      const result = await ipcRenderer.invoke('rename-project', { projectPath, newName })
+      if (result.error) {
+        addLog('error', result.error)
+      } else {
+        setProjectPath(result.newPath)
+        setProjectName(result.newName)
+        setDraftPath(result.newDraftPath)
+        addLog('success', `Projeto renomeado para "${result.newName}"`)
+      }
+    } catch (error) {
+      addLog('error', 'Erro ao renomear: ' + error)
+    }
+
+    setIsEditingName(false)
+  }
+
+  const startEditingName = () => {
+    setEditingName(projectName || '')
+    setIsEditingName(true)
+  }
+
+  // Criar novo projeto do zero
+  const handleNewProject = async () => {
+    if (!ipcRenderer) { addLog('error', 'Electron IPC not available'); return }
+    addLog('info', 'Criando novo projeto...')
+
+    try {
+      const result = await ipcRenderer.invoke('create-new-project')
+      if (result.error) {
+        addLog('error', result.error)
+        return
+      }
+
+      setProjectPath(result.path)
+      setProjectName(result.name)
+      setDraftPath(result.draftPath)
+      setTracks([])
+      setSelectedAudioTrack(0)
+      addLog('success', `Projeto criado: ${result.name}`)
+      addLog('info', 'Agora adicione midias na aba MIDIA')
+    } catch (error) {
+      addLog('error', 'Erro ao criar projeto: ' + error)
+    }
+  }
+
   // Selecionar projeto da lista
   const handleSelectProject = async (project: { name: string; path: string; draftPath: string }) => {
     setShowProjectPicker(false)
@@ -450,12 +515,61 @@ export default function MainLayout({ user, onLogout }: MainLayoutProps) {
                 <FolderOpen className="w-3.5 h-3.5" />
                 Manual
               </button>
+              <button
+                onClick={handleNewProject}
+                disabled={isLoading}
+                className="py-1.5 px-3 flex items-center gap-1.5 text-xs font-medium rounded-lg transition-all hover:brightness-110"
+                title="Criar novo projeto do zero"
+                style={{ backgroundColor: '#22c55e', color: '#fff' }}
+              >
+                <Plus className="w-3.5 h-3.5" />
+                Novo Projeto
+              </button>
 
               {projectPath && (
                 <>
                   <div className="flex items-center gap-1 text-xs">
                     <ChevronRight className="w-3.5 h-3.5 text-text-muted" />
-                    <span className="text-white font-medium truncate max-w-[200px]">{projectName}</span>
+                    {isEditingName ? (
+                      <div className="flex items-center gap-1">
+                        <input
+                          type="text"
+                          value={editingName}
+                          onChange={(e) => setEditingName(e.target.value)}
+                          onKeyDown={(e) => {
+                            if (e.key === 'Enter') handleRenameProject()
+                            if (e.key === 'Escape') setIsEditingName(false)
+                          }}
+                          className="bg-white/10 border border-primary rounded px-2 py-0.5 text-white text-xs w-48 focus:outline-none focus:ring-1 focus:ring-primary"
+                          autoFocus
+                        />
+                        <button
+                          onClick={handleRenameProject}
+                          className="p-1 hover:bg-green-500/20 rounded text-green-400"
+                          title="Confirmar"
+                        >
+                          <Check className="w-3.5 h-3.5" />
+                        </button>
+                        <button
+                          onClick={() => setIsEditingName(false)}
+                          className="p-1 hover:bg-red-500/20 rounded text-red-400"
+                          title="Cancelar"
+                        >
+                          <X className="w-3.5 h-3.5" />
+                        </button>
+                      </div>
+                    ) : (
+                      <>
+                        <span className="text-white font-medium truncate max-w-[200px]">{projectName}</span>
+                        <button
+                          onClick={startEditingName}
+                          className="p-1 hover:bg-white/10 rounded text-text-muted hover:text-white transition-colors"
+                          title="Renomear projeto"
+                        >
+                          <Pencil className="w-3 h-3" />
+                        </button>
+                      </>
+                    )}
                     <span className="text-text-muted">({tracks.length} tracks)</span>
                   </div>
                   <button
@@ -464,6 +578,24 @@ export default function MainLayout({ user, onLogout }: MainLayoutProps) {
                     title="Abrir pasta do projeto no Explorer"
                   >
                     <ExternalLink className="w-3.5 h-3.5" />
+                  </button>
+                  <button
+                    onClick={async () => {
+                      const result = await ipcRenderer?.invoke('open-capcut')
+                      if (result?.error) {
+                        addLog('error', result.error)
+                      } else {
+                        addLog('success', 'CapCut aberto!')
+                      }
+                    }}
+                    className="py-1.5 px-3 flex items-center gap-1.5 text-xs font-medium rounded-lg transition-all hover:brightness-110"
+                    title="Abrir CapCut"
+                    style={{ backgroundColor: '#00d4aa', color: '#000' }}
+                  >
+                    <svg className="w-4 h-4" viewBox="0 0 24 24" fill="currentColor">
+                      <path d="M12 2C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2zm-2 14.5v-9l6 4.5-6 4.5z"/>
+                    </svg>
+                    Abrir CapCut
                   </button>
                   <button
                     onClick={handleReanalyze}
@@ -624,6 +756,23 @@ export default function MainLayout({ user, onLogout }: MainLayoutProps) {
                       className="h-full overflow-auto"
                     >
                       <SrtPanel onLog={addLog} draftPath={draftPath} onReanalyze={handleReanalyze} />
+                    </motion.div>
+                  )}
+                  {activeTab === 'media' && (
+                    <motion.div
+                      key="media"
+                      initial={{ opacity: 0, x: -10 }}
+                      animate={{ opacity: 1, x: 0 }}
+                      exit={{ opacity: 0, x: 10 }}
+                      className="h-full overflow-auto"
+                    >
+                      <MediaPanel
+                        onLog={addLog}
+                        draftPath={draftPath}
+                        onReanalyze={handleReanalyze}
+                        selectedAudioTrack={selectedAudioTrack}
+                        refTrackName={audioTracks.find(t => t.index === selectedAudioTrack)?.name}
+                      />
                     </motion.div>
                   )}
                 </AnimatePresence>

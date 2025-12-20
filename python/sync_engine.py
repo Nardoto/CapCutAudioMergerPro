@@ -765,13 +765,384 @@ def insert_srt_batch(draft_path, srt_files, create_title=True, gap_ms=2000000):
     except Exception as e:
         return {'error': str(e)}
 
+# ============ FUNÇÕES DE MÍDIA ============
+
+def get_media_info(file_path):
+    """Obtém informações de mídia (duração, largura, altura) usando ffprobe ou valores padrão."""
+    import subprocess
+    ext = os.path.splitext(file_path)[1].lower()
+
+    # Valores padrão
+    duration = 5000000  # 5 segundos para imagens
+    width, height = 1920, 1080
+    has_audio = False
+    media_type = "photo" if ext in ['.jpg', '.jpeg', '.png', '.gif', '.bmp', '.webp'] else "video"
+
+    try:
+        cmd = ['ffprobe', '-v', 'quiet', '-print_format', 'json', '-show_format', '-show_streams', file_path]
+        result = subprocess.run(cmd, capture_output=True, text=True, timeout=10)
+        if result.returncode == 0:
+            info = json.loads(result.stdout)
+            if 'format' in info and 'duration' in info['format']:
+                duration = int(float(info['format']['duration']) * 1000000)
+            for stream in info.get('streams', []):
+                if stream.get('codec_type') == 'video':
+                    width = stream.get('width', width)
+                    height = stream.get('height', height)
+                elif stream.get('codec_type') == 'audio':
+                    has_audio = True
+    except:
+        pass
+
+    return {'duration': duration, 'width': width, 'height': height, 'has_audio': has_audio, 'type': media_type}
+
+def criar_material_video(file_path, duration, width, height, has_audio=True, media_type="video"):
+    """Cria um material de vídeo/imagem completo."""
+    mat_id = str(uuid.uuid4()).upper()
+    local_mat_id = str(uuid.uuid4()).lower()
+
+    return mat_id, local_mat_id, {
+        "aigc_type": "none", "audio_fade": None, "category_name": "local", "check_flag": 62978047,
+        "crop": {"lower_left_x": 0.0, "lower_left_y": 1.0, "lower_right_x": 1.0, "lower_right_y": 1.0,
+                 "upper_left_x": 0.0, "upper_left_y": 0.0, "upper_right_x": 1.0, "upper_right_y": 0.0},
+        "crop_ratio": "free", "crop_scale": 1.0, "duration": duration,
+        "has_audio": has_audio, "has_sound_separated": False, "height": height, "id": mat_id,
+        "local_material_id": local_mat_id, "material_name": os.path.basename(file_path),
+        "path": file_path.replace('\\', '/'), "source": 0, "source_platform": 0,
+        "type": media_type, "width": width,
+        "matting": {"flag": 0, "has_use_quick_brush": False, "has_use_quick_eraser": False, "interactiveTime": [], "path": "", "strokes": []},
+        "stable": {"matrix_path": "", "stable_level": 0, "time_range": {"duration": 0, "start": 0}},
+        "video_algorithm": {"algorithms": [], "path": ""}
+    }
+
+def criar_materiais_auxiliares_video():
+    """Cria os 6 materiais auxiliares necessários para um segmento de vídeo."""
+    speed_id = str(uuid.uuid4()).upper()
+    placeholder_id = str(uuid.uuid4()).upper()
+    canvas_id = str(uuid.uuid4()).upper()
+    channel_id = str(uuid.uuid4()).upper()
+    color_id = str(uuid.uuid4()).upper()
+    vocal_id = str(uuid.uuid4()).upper()
+
+    return {
+        'speed': {"curve_speed": None, "id": speed_id, "mode": 0, "speed": 1.0, "type": "speed"},
+        'placeholder': {"error_path": "", "error_text": "", "id": placeholder_id, "meta_type": "none", "res_path": "", "res_text": "", "type": "placeholder_info"},
+        'canvas': {"album_image": "", "blur": 0.0, "color": "", "id": canvas_id, "image": "", "image_id": "", "image_name": "", "source_platform": 0, "team_id": "", "type": "canvas_color"},
+        'channel': {"audio_channel_mapping": 0, "id": channel_id, "is_config_open": False, "type": "none"},
+        'color': {"gradient_angle": 90.0, "gradient_colors": [], "gradient_percents": [], "height": 0.0, "id": color_id, "is_color_clip": False, "is_gradient": False, "solid_color": "", "width": 0.0},
+        'vocal': {"choice": 0, "enter_from": "", "final_algorithm": "", "id": vocal_id, "production_path": "", "removed_sounds": [], "time_range": None, "type": "vocal_separation"},
+        'refs': [speed_id, placeholder_id, canvas_id, channel_id, color_id, vocal_id]
+    }
+
+def criar_segmento_video(mat_id, start, duration, extra_refs, render_index=0):
+    """Cria um segmento de vídeo para a timeline."""
+    seg_id = str(uuid.uuid4()).upper()
+    return {
+        "caption_info": None, "cartoon": False,
+        "clip": {"alpha": 1.0, "flip": {"horizontal": False, "vertical": False}, "rotation": 0.0, "scale": {"x": 1.0, "y": 1.0}, "transform": {"x": 0.0, "y": 0.0}},
+        "common_keyframes": [], "enable_adjust": True, "enable_color_curves": True, "enable_color_wheels": True,
+        "enable_hsl_curves": True, "enable_lut": True, "enable_video_mask": True,
+        "extra_material_refs": extra_refs, "group_id": "",
+        "hdr_settings": {"intensity": 1.0, "mode": 1, "nits": 1000},
+        "id": seg_id, "is_placeholder": False, "keyframe_refs": [], "last_nonzero_volume": 1.0,
+        "material_id": mat_id, "render_index": render_index,
+        "render_timerange": {"duration": 0, "start": 0},
+        "responsive_layout": {"enable": False, "horizontal_pos_layout": 0, "size_layout": 0, "target_follow": "", "vertical_pos_layout": 0},
+        "reverse": False, "source": "segmentsourcenormal",
+        "source_timerange": {"duration": duration, "start": 0},
+        "speed": 1.0, "state": 0, "target_timerange": {"duration": duration, "start": start},
+        "template_id": "", "template_scene": "default", "track_attribute": 1, "track_render_index": 0,
+        "uniform_scale": {"on": True, "value": 1.0}, "visible": True, "volume": 0.0
+    }
+
+def insert_media_batch(draft_path, media_files, image_duration=5000000):
+    """
+    Insere múltiplos arquivos de mídia (vídeo/imagem) sequencialmente na timeline.
+    Arquivos são ordenados alfabeticamente.
+    """
+    try:
+        logs = []
+        backup_path = create_backup(draft_path)
+        logs.append(f"[BACKUP] {os.path.basename(backup_path)}")
+
+        with open(draft_path, 'r', encoding='utf-8') as f:
+            projeto = json.load(f)
+
+        # Ordenar arquivos alfabeticamente
+        media_files = sorted(media_files, key=lambda x: os.path.basename(x).lower())
+        logs.append(f"[INFO] {len(media_files)} arquivos em ordem alfabética")
+
+        # Encontrar ou criar track de vídeo
+        video_track_idx = None
+        for idx, track in enumerate(projeto.get('tracks', [])):
+            if track.get('type') == 'video':
+                video_track_idx = idx
+                break
+
+        if video_track_idx is None:
+            projeto.setdefault('tracks', []).insert(0, {
+                "attribute": 0, "flag": 0, "id": str(uuid.uuid4()).upper(),
+                "is_default_name": True, "name": "", "segments": [], "type": "video"
+            })
+            video_track_idx = 0
+            logs.append("[+] Track de vídeo criada")
+
+        # Calcular posição inicial
+        current_time = 0
+        if projeto['tracks'][video_track_idx].get('segments'):
+            last_seg = projeto['tracks'][video_track_idx]['segments'][-1]
+            current_time = last_seg['target_timerange']['start'] + last_seg['target_timerange']['duration']
+
+        # Processar cada arquivo
+        for file_path in media_files:
+            if not os.path.exists(file_path):
+                logs.append(f"[SKIP] Não encontrado: {os.path.basename(file_path)}")
+                continue
+
+            info = get_media_info(file_path)
+            duration = image_duration if info['type'] == 'photo' else info['duration']
+
+            # Criar material
+            mat_id, local_mat_id, video_mat = criar_material_video(
+                file_path, duration, info['width'], info['height'], info['has_audio'], info['type']
+            )
+            projeto['materials'].setdefault('videos', []).append(video_mat)
+
+            # Criar materiais auxiliares
+            aux = criar_materiais_auxiliares_video()
+            projeto['materials'].setdefault('speeds', []).append(aux['speed'])
+            projeto['materials'].setdefault('placeholder_infos', []).append(aux['placeholder'])
+            projeto['materials'].setdefault('canvases', []).append(aux['canvas'])
+            projeto['materials'].setdefault('sound_channel_mappings', []).append(aux['channel'])
+            projeto['materials'].setdefault('material_colors', []).append(aux['color'])
+            projeto['materials'].setdefault('vocal_separations', []).append(aux['vocal'])
+
+            # Criar segmento
+            segment = criar_segmento_video(mat_id, current_time, duration, aux['refs'])
+            projeto['tracks'][video_track_idx]['segments'].append(segment)
+
+            logs.append(f"[+] {os.path.basename(file_path)} ({duration/1000000:.2f}s)")
+            current_time += duration
+
+        # Atualizar duração do projeto
+        if current_time > projeto.get('duration', 0):
+            projeto['duration'] = current_time
+            logs.append(f"[+] Duração: {current_time/1000000:.2f}s")
+
+        with open(draft_path, 'w', encoding='utf-8') as f:
+            json.dump(projeto, f, indent=2, ensure_ascii=False)
+
+        return {'success': True, 'logs': logs, 'stats': {'totalMedia': len(media_files), 'totalDuration': current_time}}
+    except Exception as e:
+        return {'error': str(e)}
+
+# ============ FUNÇÕES DE ÁUDIO ============
+
+def criar_material_audio(file_path, duration):
+    """Cria um material de áudio completo."""
+    mat_id = str(uuid.uuid4()).upper()
+    local_mat_id = str(uuid.uuid4()).lower()
+    music_id = str(uuid.uuid4()).lower()
+
+    return mat_id, local_mat_id, {
+        "category_name": "local", "check_flag": 1, "duration": duration,
+        "id": mat_id, "local_material_id": local_mat_id, "music_id": music_id,
+        "name": os.path.basename(file_path), "path": file_path.replace('\\', '/'),
+        "source_platform": 0, "type": "extract_music", "wave_points": []
+    }
+
+def criar_materiais_auxiliares_audio():
+    """Cria os 5 materiais auxiliares necessários para um segmento de áudio."""
+    speed_id = str(uuid.uuid4()).upper()
+    placeholder_id = str(uuid.uuid4()).upper()
+    beat_id = str(uuid.uuid4()).upper()
+    channel_id = str(uuid.uuid4()).upper()
+    vocal_id = str(uuid.uuid4()).upper()
+
+    return {
+        'speed': {"curve_speed": None, "id": speed_id, "mode": 0, "speed": 1.0, "type": "speed"},
+        'placeholder': {"error_path": "", "error_text": "", "id": placeholder_id, "meta_type": "none", "res_path": "", "res_text": "", "type": "placeholder_info"},
+        'beat': {"ai_beats": {"beat_speed_infos": [], "beats_path": "", "beats_url": "", "melody_path": "", "melody_percents": [0.0], "melody_url": ""}, "enable_ai_beats": False, "gear": 404, "gear_count": 0, "id": beat_id, "mode": 404, "type": "beats", "user_beats": [], "user_delete_ai_beats": None},
+        'channel': {"audio_channel_mapping": 0, "id": channel_id, "is_config_open": False, "type": "none"},
+        'vocal': {"choice": 0, "enter_from": "", "final_algorithm": "", "id": vocal_id, "production_path": "", "removed_sounds": [], "time_range": None, "type": "vocal_separation"},
+        'refs': [speed_id, placeholder_id, beat_id, channel_id, vocal_id]
+    }
+
+def criar_segmento_audio(mat_id, start, duration, extra_refs, render_index=0):
+    """Cria um segmento de áudio para a timeline."""
+    seg_id = str(uuid.uuid4()).upper()
+    return {
+        "caption_info": None, "cartoon": False, "clip": None,
+        "common_keyframes": [], "enable_adjust": False, "enable_color_curves": True, "enable_color_wheels": True,
+        "enable_hsl_curves": True, "enable_video_mask": True,
+        "extra_material_refs": extra_refs, "group_id": "",
+        "id": seg_id, "is_placeholder": False, "keyframe_refs": [], "last_nonzero_volume": 1.0,
+        "material_id": mat_id, "render_index": render_index,
+        "render_timerange": {"duration": 0, "start": 0},
+        "responsive_layout": {"enable": False, "horizontal_pos_layout": 0, "size_layout": 0, "target_follow": "", "vertical_pos_layout": 0},
+        "reverse": False, "source": "segmentsourcenormal",
+        "source_timerange": {"duration": duration, "start": 0},
+        "speed": 1.0, "state": 0, "target_timerange": {"duration": duration, "start": start},
+        "template_id": "", "template_scene": "default", "track_attribute": 0, "track_render_index": 1,
+        "uniform_scale": None, "visible": True, "volume": 1.0
+    }
+
+def insert_audio_batch(draft_path, audio_files, use_existing_track=False, track_index=None):
+    """
+    Insere múltiplos arquivos de áudio sequencialmente na timeline.
+
+    Args:
+        draft_path: Caminho do draft_content.json
+        audio_files: Lista de caminhos completos dos arquivos de áudio
+        use_existing_track: Se True, usa track existente. Se False, cria nova.
+        track_index: Índice da track a usar (se use_existing_track=True)
+    """
+    try:
+        logs = []
+        backup_path = create_backup(draft_path)
+        logs.append(f"[BACKUP] {os.path.basename(backup_path)}")
+
+        with open(draft_path, 'r', encoding='utf-8') as f:
+            projeto = json.load(f)
+
+        # Ordenar arquivos alfabeticamente
+        audio_files = sorted(audio_files, key=lambda x: os.path.basename(x).lower())
+        logs.append(f"[INFO] {len(audio_files)} arquivos em ordem alfabética")
+
+        # Encontrar ou criar track de áudio
+        audio_track_idx = None
+
+        if use_existing_track and track_index is not None:
+            # Usar track especificada
+            if track_index < len(projeto.get('tracks', [])):
+                if projeto['tracks'][track_index].get('type') == 'audio':
+                    audio_track_idx = track_index
+                    logs.append(f"[INFO] Usando track de áudio existente (índice {track_index})")
+
+        if audio_track_idx is None:
+            # Criar nova track de áudio
+            new_track = {
+                "attribute": 0, "flag": 0, "id": str(uuid.uuid4()).upper(),
+                "is_default_name": True, "name": "", "segments": [], "type": "audio"
+            }
+            projeto.setdefault('tracks', []).append(new_track)
+            audio_track_idx = len(projeto['tracks']) - 1
+            logs.append("[+] Nova track de áudio criada")
+
+        # Calcular posição inicial
+        current_time = 0
+        if projeto['tracks'][audio_track_idx].get('segments'):
+            last_seg = projeto['tracks'][audio_track_idx]['segments'][-1]
+            current_time = last_seg['target_timerange']['start'] + last_seg['target_timerange']['duration']
+
+        # Processar cada arquivo
+        for file_path in audio_files:
+            if not os.path.exists(file_path):
+                logs.append(f"[SKIP] Não encontrado: {os.path.basename(file_path)}")
+                continue
+
+            # Obter duração do áudio
+            info = get_media_info(file_path)
+            duration = info['duration']
+
+            # Criar material de áudio
+            mat_id, local_mat_id, audio_mat = criar_material_audio(file_path, duration)
+            projeto['materials'].setdefault('audios', []).append(audio_mat)
+
+            # Criar materiais auxiliares
+            aux = criar_materiais_auxiliares_audio()
+            projeto['materials'].setdefault('speeds', []).append(aux['speed'])
+            projeto['materials'].setdefault('placeholder_infos', []).append(aux['placeholder'])
+            projeto['materials'].setdefault('beats', []).append(aux['beat'])
+            projeto['materials'].setdefault('sound_channel_mappings', []).append(aux['channel'])
+            projeto['materials'].setdefault('vocal_separations', []).append(aux['vocal'])
+
+            # Criar segmento
+            segment = criar_segmento_audio(mat_id, current_time, duration, aux['refs'])
+            projeto['tracks'][audio_track_idx]['segments'].append(segment)
+
+            logs.append(f"[+] {os.path.basename(file_path)} ({duration/1000000:.2f}s)")
+            current_time += duration
+
+        # Atualizar duração do projeto
+        if current_time > projeto.get('duration', 0):
+            projeto['duration'] = current_time
+            logs.append(f"[+] Duração: {current_time/1000000:.2f}s")
+
+        with open(draft_path, 'w', encoding='utf-8') as f:
+            json.dump(projeto, f, indent=2, ensure_ascii=False)
+
+        return {'success': True, 'logs': logs, 'stats': {'totalAudio': len(audio_files), 'totalDuration': current_time}}
+    except Exception as e:
+        return {'error': str(e)}
+
+# ============ RANDOMIZE EXISTING MEDIA ============
+def randomize_existing_media(draft_path):
+    """Randomiza a ordem das mídias existentes na timeline (mantém durações, troca materiais)"""
+    try:
+        logs = []
+        backup_path = create_backup(draft_path)
+        logs.append(f"[BACKUP] {os.path.basename(backup_path)}")
+
+        with open(draft_path, 'r', encoding='utf-8') as f:
+            projeto = json.load(f)
+
+        # Encontrar track de vídeo (type == 'video')
+        video_track_idx = None
+        for idx, track in enumerate(projeto.get('tracks', [])):
+            if track.get('type') == 'video':
+                video_track_idx = idx
+                break
+
+        if video_track_idx is None:
+            return {'error': 'Nenhuma track de vídeo encontrada'}
+
+        segments = projeto['tracks'][video_track_idx].get('segments', [])
+        if len(segments) < 2:
+            return {'error': 'Precisa de pelo menos 2 segmentos para randomizar'}
+
+        logs.append(f"[INFO] {len(segments)} segmentos encontrados")
+
+        # Coletar os material_ids de cada segmento
+        material_ids = [seg.get('material_id') for seg in segments]
+
+        # Embaralhar os material_ids
+        shuffled_ids = material_ids.copy()
+        random.shuffle(shuffled_ids)
+
+        # Aplicar os material_ids embaralhados aos segmentos
+        for i, seg in enumerate(segments):
+            old_id = seg.get('material_id')
+            new_id = shuffled_ids[i]
+            seg['material_id'] = new_id
+
+            # Também atualizar extra_material_refs se existir
+            for ref in seg.get('extra_material_refs', []):
+                if ref == old_id:
+                    seg['extra_material_refs'][seg['extra_material_refs'].index(ref)] = new_id
+
+        logs.append(f"[+] Ordem randomizada!")
+
+        # Salvar
+        with open(draft_path, 'w', encoding='utf-8') as f:
+            json.dump(projeto, f, indent=2, ensure_ascii=False)
+
+        return {'success': True, 'logs': logs, 'stats': {'totalMedia': len(segments)}}
+    except Exception as e:
+        return {'error': str(e)}
+
 # ============ MAIN ============
 if __name__ == '__main__':
     if len(sys.argv) < 2:
-        print(json.dumps({'error': 'Uso: python sync_engine.py <json>'}))
+        print(json.dumps({'error': 'Uso: python sync_engine.py <json> ou --file <arquivo>'}))
         sys.exit(1)
     try:
-        cmd = json.loads(sys.argv[1])
+        # Suporta --file para comandos muito grandes
+        if sys.argv[1] == '--file' and len(sys.argv) >= 3:
+            with open(sys.argv[2], 'r', encoding='utf-8') as f:
+                cmd = json.load(f)
+        else:
+            cmd = json.loads(sys.argv[1])
         action = cmd.get('action')
         if action == 'analyze': r = analyze_project(cmd['draftPath'])
         elif action == 'sync': r = sync_project(cmd['draftPath'], cmd.get('audioTrackIndex', 0), cmd.get('mode', 'audio'), cmd.get('syncSubtitles', True), cmd.get('applyAnimations', False))
@@ -779,6 +1150,9 @@ if __name__ == '__main__':
         elif action == 'loop_audio': r = loop_audio(cmd['draftPath'], cmd['trackIndex'], cmd['targetDuration'])
         elif action == 'insert_srt': r = insert_srt(cmd['draftPath'], cmd.get('srtFolders'), cmd.get('createTitle', True), cmd.get('selectedFilePaths'), cmd.get('srtFolder'), cmd.get('selectedFiles'))
         elif action == 'insert_srt_batch': r = insert_srt_batch(cmd['draftPath'], cmd.get('srtFiles', []), cmd.get('createTitle', True), cmd.get('gapMs', 2000000))
+        elif action == 'insert_media': r = insert_media_batch(cmd['draftPath'], cmd.get('mediaFiles', []), cmd.get('imageDuration', 5000000))
+        elif action == 'insert_audio': r = insert_audio_batch(cmd['draftPath'], cmd.get('audioFiles', []), cmd.get('useExistingTrack', False), cmd.get('trackIndex'))
+        elif action == 'randomize_media': r = randomize_existing_media(cmd['draftPath'])
         else: r = {'error': f'Ação: {action}?'}
         print(json.dumps(r, ensure_ascii=False))
     except Exception as e:

@@ -135,11 +135,29 @@ function runPython(command) {
   // No need for duplicate backup here
 
   try {
-    const result = execSync(`python "${pythonScript}" "${cmdJson.replace(/"/g, '\\"')}"`, {
-      encoding: 'utf-8',
-      maxBuffer: 50 * 1024 * 1024 // 50MB
-    });
-    return JSON.parse(result);
+    // Se o comando for muito grande (>7000 chars), usar arquivo temporário
+    if (cmdJson.length > 7000) {
+      const tempDir = require('os').tmpdir();
+      const tempFile = path.join(tempDir, `capcut_cmd_${Date.now()}.json`);
+      fs.writeFileSync(tempFile, cmdJson, 'utf-8');
+      console.log('[Python] Using temp file:', tempFile);
+
+      const result = execSync(`python "${pythonScript}" --file "${tempFile}"`, {
+        encoding: 'utf-8',
+        maxBuffer: 50 * 1024 * 1024 // 50MB
+      });
+
+      // Limpar arquivo temporário
+      try { fs.unlinkSync(tempFile); } catch {}
+
+      return JSON.parse(result);
+    } else {
+      const result = execSync(`python "${pythonScript}" "${cmdJson.replace(/"/g, '\\"')}"`, {
+        encoding: 'utf-8',
+        maxBuffer: 50 * 1024 * 1024 // 50MB
+      });
+      return JSON.parse(result);
+    }
   } catch (error) {
     console.error('[Python] Error:', error.message);
     return { error: error.message };
@@ -358,6 +376,254 @@ ipcMain.handle('window-close', () => mainWindow?.close());
 ipcMain.handle('open-external', async (_, url) => await shell.openExternal(url));
 ipcMain.handle('open-folder-in-explorer', async (_, folderPath) => await shell.openPath(folderPath));
 
+// ============ CAPCUT LAUNCHER ============
+function findCapCutExe() {
+  // Tenta encontrar o CapCut em locais comuns
+  const possiblePaths = [
+    path.join(app.getPath('appData'), '..', 'Local', 'CapCut', 'CapCut.exe'),
+    path.join(process.env.LOCALAPPDATA || '', 'CapCut', 'CapCut.exe'),
+    'C:\\Program Files\\CapCut\\CapCut.exe',
+    'C:\\Program Files (x86)\\CapCut\\CapCut.exe',
+  ];
+
+  for (const p of possiblePaths) {
+    if (fs.existsSync(p)) {
+      return p;
+    }
+  }
+  return null;
+}
+
+ipcMain.handle('open-capcut', async () => {
+  const capcutExe = findCapCutExe();
+
+  if (!capcutExe) {
+    return { error: 'CapCut não encontrado. Verifique se está instalado.' };
+  }
+
+  try {
+    spawn(capcutExe, [], { detached: true, stdio: 'ignore' });
+    return { success: true };
+  } catch (error) {
+    return { error: error.message };
+  }
+});
+
+// ============ CREATE NEW PROJECT ============
+function generateUUID() {
+  return 'xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx'.replace(/[xy]/g, function(c) {
+    const r = Math.random() * 16 | 0;
+    const v = c === 'x' ? r : (r & 0x3 | 0x8);
+    return v.toString(16).toUpperCase();
+  });
+}
+
+ipcMain.handle('create-new-project', async () => {
+  try {
+    const capCutDrafts = path.join(app.getPath('appData'), '..', 'Local', 'CapCut', 'User Data', 'Projects', 'com.lveditor.draft');
+    if (!fs.existsSync(capCutDrafts)) {
+      return { error: 'Pasta de projetos do CapCut nao encontrada. Abra o CapCut primeiro.' };
+    }
+
+    const timestamp = Date.now();
+    const microTimestamp = timestamp * 1000 + Math.floor(Math.random() * 1000);
+    const projectName = `SyncPro_${new Date().toISOString().slice(0, 10).replace(/-/g, '')}_${timestamp}`;
+    const projectPath = path.join(capCutDrafts, projectName);
+    const draftId = generateUUID();
+
+    fs.mkdirSync(projectPath, { recursive: true });
+
+    const draftContent = {
+      canvas_config: { height: 1920, width: 1080, ratio: "original" },
+      color_space: 0,
+      config: { adjust_max_index: 0, attachment_info: [], combination_max_index: 0, export_range: null, extract_audio_last_index: 0, lyrics_recognition_id: "", lyrics_sync: false, maintrack_adsorb: true, material_save_mode: 0, original_sound_last_index: 0, record_audio_last_index: 0, sticker_max_index: 0, subtitle_recognition_id: "", subtitle_sync: true, system_font_list: [], video_mute: false, zoom_info_params: null },
+      cover: null, create_time: Math.floor(timestamp / 1000), duration: 0, extra_info: null, fps: 30.0,
+      free_render_index_mode_on: false, group_container: null, id: draftId, keyframe_graph_list: [],
+      keyframes: { adjusts: [], audios: [], effects: [], filters: [], handwrites: [], stickers: [], texts: [], videos: [] },
+      last_modified_platform: { app_id: 359289, app_source: "cc", app_version: "4.0.0", device_id: "", hard_disk_id: "", mac_address: "", os: "windows", os_version: "10.0.22631" },
+      materials: { ai_translates: [], audios: [], audio_balances: [], audio_effects: [], audio_fades: [], audio_track_indexes: [], beats: [], canvases: [], chromas: [], color_curves: [], digital_humans: [], drafts: [], effects: [], flowers: [], green_screens: [], handwrites: [], hsl: [], images: [], log_color_wheels: [], loudnesses: [], manual_deformations: [], masks: [], material_animations: [], material_colors: [], multi_language_refs: [], placeholders: [], plugin_effects: [], primary_color_wheels: [], realtime_denoises: [], shapes: [], smart_crops: [], smart_relights: [], sound_channel_mappings: [], speeds: [], stickers: [], tail_leaders: [], text_templates: [], texts: [], time_marks: [], transitions: [], video_effects: [], video_trackings: [], videos: [], vocal_separations: [] },
+      mutable_config: null, name: projectName, new_version: "113.0.0",
+      platform: { app_id: 359289, app_source: "cc", app_version: "4.0.0", device_id: "", hard_disk_id: "", mac_address: "", os: "windows", os_version: "10.0.22631" },
+      relationships: [], render_index_track_mode_on: false, retouch_cover: null, source: "default",
+      static_cover_image_path: "", tracks: [], update_time: Math.floor(timestamp / 1000), version: 360000
+    };
+
+    const draftPath = path.join(projectPath, 'draft_content.json');
+    fs.writeFileSync(draftPath, JSON.stringify(draftContent, null, 2));
+
+    const draftInfo = {
+      draft_cloud_capcut_purchase_info: null, draft_cloud_purchase_info: null, draft_cloud_template_id: "",
+      draft_cloud_tutorial_info: null, draft_cloud_videocut_purchase_info: null, draft_cover: "", draft_deeplink_url: "",
+      draft_enterprise_info: null, draft_fold_path: projectPath, draft_id: draftId, draft_is_ai_shorts: false,
+      draft_is_article_video_draft: false, draft_is_from_deeplink: false, draft_is_invisible: false, draft_materials_copied: false,
+      draft_materials_copied_path: null, draft_name: projectName, draft_new_version: "", draft_removable_storage_device: "",
+      draft_root_path: capCutDrafts, draft_segment_extra_info: null, draft_timeline_materials_size: 0, draft_type: "normal",
+      tm_draft_cloud_completed: null, tm_draft_cloud_modified: 0, tm_draft_create: Math.floor(timestamp / 1000),
+      tm_draft_modified: Math.floor(timestamp / 1000), tm_draft_removed: 0
+    };
+    fs.writeFileSync(path.join(projectPath, 'draft_info.json'), JSON.stringify(draftInfo, null, 2));
+
+    // Criar draft_meta_info.json - CRÍTICO para o CapCut reconhecer o projeto
+    const draftMetaInfo = {
+      cloud_draft_cover: true,
+      cloud_draft_sync: true,
+      draft_cloud_last_action_download: false,
+      draft_cloud_purchase_info: "",
+      draft_cloud_template_id: "",
+      draft_cloud_tutorial_info: "",
+      draft_cloud_videocut_purchase_info: "",
+      draft_cover: "",
+      draft_enterprise_info: { draft_enterprise_extra: "", draft_enterprise_id: "", draft_enterprise_name: "", enterprise_material: [] },
+      draft_fold_path: projectPath.replace(/\\/g, '/'),
+      draft_id: draftId,
+      draft_is_ai_shorts: false,
+      draft_is_article_video_draft: false,
+      draft_is_cloud_temp_draft: false,
+      draft_is_from_deeplink: "false",
+      draft_is_invisible: false,
+      draft_is_web_article_video: false,
+      draft_materials: [
+        { type: 0, value: [] },  // videos/fotos
+        { type: 1, value: [] },  // imagens
+        { type: 2, value: [] },  // texto/legendas
+        { type: 3, value: [] },
+        { type: 6, value: [] },  // audio
+        { type: 7, value: [] },
+        { type: 8, value: [] }
+      ],
+      draft_materials_copied_info: [],
+      draft_name: projectName,
+      draft_need_rename_folder: false,
+      draft_new_version: "",
+      draft_removable_storage_device: "",
+      draft_root_path: capCutDrafts.replace(/\\/g, '/'),
+      draft_segment_extra_info: [],
+      draft_timeline_materials_size_: 0,
+      draft_type: "",
+      tm_draft_create: microTimestamp,
+      tm_draft_modified: microTimestamp,
+      tm_draft_removed: 0,
+      tm_duration: 0
+    };
+    fs.writeFileSync(path.join(projectPath, 'draft_meta_info.json'), JSON.stringify(draftMetaInfo));
+
+    // Registrar no root_meta_info.json para aparecer no CapCut
+    const rootMetaPath = path.join(capCutDrafts, 'root_meta_info.json');
+    let rootMeta = { all_draft_store: [], draft_ids: 0, root_path: capCutDrafts.replace(/\\/g, '/') };
+    if (fs.existsSync(rootMetaPath)) {
+      try { rootMeta = JSON.parse(fs.readFileSync(rootMetaPath, 'utf-8')); } catch (e) { console.error('Error reading root_meta_info:', e); }
+    }
+
+    const newDraftEntry = {
+      cloud_draft_cover: true, cloud_draft_sync: true, draft_cloud_last_action_download: false,
+      draft_cloud_purchase_info: "", draft_cloud_template_id: "", draft_cloud_tutorial_info: "",
+      draft_cloud_videocut_purchase_info: "", draft_cover: "",
+      draft_fold_path: projectPath.replace(/\\/g, '/'),
+      draft_id: draftId, draft_is_ai_shorts: false, draft_is_cloud_temp_draft: false, draft_is_invisible: false,
+      draft_is_web_article_video: false, draft_json_file: projectPath.replace(/\\/g, '/') + '/draft_content.json',
+      draft_name: projectName, draft_new_version: "", draft_root_path: capCutDrafts.replace(/\\/g, '/'),
+      draft_timeline_materials_size: 0, draft_type: "", draft_web_article_video_enter_from: "",
+      streaming_edit_draft_ready: true, tm_draft_cloud_completed: "", tm_draft_cloud_entry_id: -1,
+      tm_draft_cloud_modified: 0, tm_draft_cloud_parent_entry_id: -1, tm_draft_cloud_space_id: -1,
+      tm_draft_cloud_user_id: -1, tm_draft_create: microTimestamp, tm_draft_modified: microTimestamp,
+      tm_draft_removed: 0, tm_duration: 0
+    };
+
+    rootMeta.all_draft_store.unshift(newDraftEntry);
+    rootMeta.draft_ids = (rootMeta.draft_ids || 0) + 1;
+    fs.writeFileSync(rootMetaPath, JSON.stringify(rootMeta));
+
+    return { success: true, path: projectPath, name: projectName, draftPath: draftPath };
+  } catch (error) {
+    return { error: error.message };
+  }
+});
+
+// ============ RENAME PROJECT ============
+ipcMain.handle('rename-project', async (_, { projectPath, newName }) => {
+  try {
+    const oldName = path.basename(projectPath);
+    const parentDir = path.dirname(projectPath);
+    const newPath = path.join(parentDir, newName);
+
+    // Verificar se já existe pasta com esse nome
+    if (fs.existsSync(newPath)) {
+      return { error: 'Já existe um projeto com esse nome' };
+    }
+
+    // Renomear a pasta
+    fs.renameSync(projectPath, newPath);
+
+    // Atualizar draft_info.json
+    const draftInfoPath = path.join(newPath, 'draft_info.json');
+    if (fs.existsSync(draftInfoPath)) {
+      const draftInfo = JSON.parse(fs.readFileSync(draftInfoPath, 'utf-8'));
+      draftInfo.draft_name = newName;
+      draftInfo.draft_fold_path = newPath;
+      fs.writeFileSync(draftInfoPath, JSON.stringify(draftInfo, null, 2));
+    }
+
+    // Atualizar draft_meta_info.json
+    const draftMetaInfoPath = path.join(newPath, 'draft_meta_info.json');
+    if (fs.existsSync(draftMetaInfoPath)) {
+      const draftMetaInfo = JSON.parse(fs.readFileSync(draftMetaInfoPath, 'utf-8'));
+      draftMetaInfo.draft_name = newName;
+      draftMetaInfo.draft_fold_path = newPath.replace(/\\/g, '/');
+      fs.writeFileSync(draftMetaInfoPath, JSON.stringify(draftMetaInfo));
+    }
+
+    // Atualizar draft_content.json
+    const draftContentPath = path.join(newPath, 'draft_content.json');
+    if (fs.existsSync(draftContentPath)) {
+      const draftContent = JSON.parse(fs.readFileSync(draftContentPath, 'utf-8'));
+      draftContent.name = newName;
+      fs.writeFileSync(draftContentPath, JSON.stringify(draftContent, null, 2));
+    }
+
+    // Atualizar root_meta_info.json
+    const capCutDrafts = path.join(app.getPath('appData'), '..', 'Local', 'CapCut', 'User Data', 'Projects', 'com.lveditor.draft');
+    const rootMetaPath = path.join(capCutDrafts, 'root_meta_info.json');
+    if (fs.existsSync(rootMetaPath)) {
+      const rootMeta = JSON.parse(fs.readFileSync(rootMetaPath, 'utf-8'));
+      const draftEntry = rootMeta.all_draft_store?.find(d => d.draft_fold_path?.includes(oldName));
+      if (draftEntry) {
+        draftEntry.draft_name = newName;
+        draftEntry.draft_fold_path = newPath.replace(/\\/g, '/');
+        draftEntry.draft_json_file = path.join(newPath, 'draft_content.json').replace(/\\/g, '/');
+        fs.writeFileSync(rootMetaPath, JSON.stringify(rootMeta));
+      }
+    }
+
+    return {
+      success: true,
+      newPath,
+      newName,
+      newDraftPath: path.join(newPath, 'draft_content.json')
+    };
+  } catch (error) {
+    return { error: error.message };
+  }
+});
+
+// ============ DIALOG HANDLERS ============
+ipcMain.handle('dialog:openFile', async (_, options) => {
+  return dialog.showOpenDialog(mainWindow, options);
+});
+
+ipcMain.handle('list-files-in-folder', async (_, { folderPath, extensions }) => {
+  try {
+    const files = fs.readdirSync(folderPath)
+      .filter(file => {
+        const ext = path.extname(file).toLowerCase().slice(1);
+        return extensions.includes(ext);
+      })
+      .map(file => path.join(folderPath, file));
+    return { files };
+  } catch (error) {
+    return { error: error.message, files: [] };
+  }
+});
+
 // ============ AUTO-UPDATE HANDLERS ============
 ipcMain.handle('check-for-updates', async () => {
   return await checkForUpdates();
@@ -423,6 +689,11 @@ ipcMain.handle('insert-srt-batch', async (_, { draftPath, srtFiles, createTitle,
   // srtFiles is an array of full paths
   // gapMs is the gap between each SRT block in microseconds
   return runPython({ action: 'insert_srt_batch', draftPath, srtFiles, createTitle, gapMs });
+});
+
+// ============ INSERT MEDIA BATCH (video/image) ============
+ipcMain.handle('run-python', async (_, command) => {
+  return runPython(command);
 });
 
 // ============ BACKUP / UNDO SYSTEM (Multi-level) ============
