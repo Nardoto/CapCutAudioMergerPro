@@ -605,6 +605,285 @@ ipcMain.handle('rename-project', async (_, { projectPath, newName }) => {
   }
 });
 
+// ============ CREATE FROM TEMPLATE ============
+ipcMain.handle('create-from-template', async (_, { templatePath, newName, keepMedia, expandEffects }) => {
+  try {
+    const capCutDrafts = path.join(app.getPath('appData'), '..', 'Local', 'CapCut', 'User Data', 'Projects', 'com.lveditor.draft');
+    if (!fs.existsSync(capCutDrafts)) {
+      return { error: 'Pasta de projetos do CapCut nao encontrada.' };
+    }
+
+    const timestamp = Date.now();
+    const microTimestamp = timestamp * 1000 + Math.floor(Math.random() * 1000);
+    const projectName = newName || `Template_${new Date().toISOString().slice(0, 10).replace(/-/g, '')}_${timestamp}`;
+    const projectPath = path.join(capCutDrafts, projectName);
+    const newDraftId = generateUUID();
+
+    // Verificar se já existe
+    if (fs.existsSync(projectPath)) {
+      return { error: 'Já existe um projeto com esse nome' };
+    }
+
+    // Criar pasta do novo projeto
+    fs.mkdirSync(projectPath, { recursive: true });
+
+    // Ler o draft_content.json do template
+    const templateDraftPath = path.join(templatePath, 'draft_content.json');
+    if (!fs.existsSync(templateDraftPath)) {
+      return { error: 'Template não contém draft_content.json' };
+    }
+
+    const templateContent = JSON.parse(fs.readFileSync(templateDraftPath, 'utf-8'));
+
+    // Modificar o conteúdo
+    templateContent.id = newDraftId;
+    templateContent.name = projectName;
+    templateContent.create_time = Math.floor(timestamp / 1000);
+    templateContent.update_time = Math.floor(timestamp / 1000);
+
+    // Se não manter mídias, REMOVER tracks de video/audio e manter apenas efeitos/filtros/texto
+    if (!keepMedia) {
+      // Remover completamente as tracks de video e audio (manter text, effect, filter)
+      templateContent.tracks = (templateContent.tracks || []).filter(track =>
+        !['video', 'audio'].includes(track.type)
+      );
+
+      // Limpar TODOS os materiais de mídia
+      if (templateContent.materials) {
+        templateContent.materials.videos = [];
+        templateContent.materials.audios = [];
+        templateContent.materials.images = [];
+        // Limpar também efeitos de áudio e configurações relacionadas a mídia
+        templateContent.materials.audio_balances = [];
+        templateContent.materials.audio_effects = [];
+        templateContent.materials.audio_fades = [];
+        templateContent.materials.loudnesses = [];
+        templateContent.materials.sound_channel_mappings = [];
+        templateContent.materials.speeds = [];
+        templateContent.materials.vocal_separations = [];
+        templateContent.materials.video_trackings = [];
+      }
+
+      // Resetar duração para 0
+      templateContent.duration = 0;
+
+      // Limpar keyframes de video e audio
+      if (templateContent.keyframes) {
+        templateContent.keyframes.videos = [];
+        templateContent.keyframes.audios = [];
+      }
+    }
+
+    // Se expandir efeitos, calcular a duração máxima e expandir tracks de efeito/filtro
+    if (expandEffects && keepMedia) {
+      // Calcular duração máxima da timeline
+      let maxDuration = 0;
+      (templateContent.tracks || []).forEach(track => {
+        (track.segments || []).forEach(seg => {
+          const end = (seg.target_timerange?.start || 0) + (seg.target_timerange?.duration || 0);
+          if (end > maxDuration) maxDuration = end;
+        });
+      });
+
+      // Expandir tracks de efeito e filtro
+      if (maxDuration > 0) {
+        templateContent.tracks = (templateContent.tracks || []).map(track => {
+          if (['effect', 'filter'].includes(track.type) && track.segments?.length > 0) {
+            track.segments = track.segments.map(seg => ({
+              ...seg,
+              target_timerange: {
+                ...seg.target_timerange,
+                start: 0,
+                duration: maxDuration
+              }
+            }));
+          }
+          return track;
+        });
+      }
+    }
+
+    // Salvar draft_content.json
+    const draftPath = path.join(projectPath, 'draft_content.json');
+    fs.writeFileSync(draftPath, JSON.stringify(templateContent, null, 2));
+
+    // Criar draft_info.json
+    const draftInfo = {
+      draft_cloud_capcut_purchase_info: null, draft_cloud_purchase_info: null, draft_cloud_template_id: "",
+      draft_cloud_tutorial_info: null, draft_cloud_videocut_purchase_info: null, draft_cover: "", draft_deeplink_url: "",
+      draft_enterprise_info: null, draft_fold_path: projectPath, draft_id: newDraftId, draft_is_ai_shorts: false,
+      draft_is_article_video_draft: false, draft_is_from_deeplink: false, draft_is_invisible: false, draft_materials_copied: false,
+      draft_materials_copied_path: null, draft_name: projectName, draft_new_version: "", draft_removable_storage_device: "",
+      draft_root_path: capCutDrafts, draft_segment_extra_info: null, draft_timeline_materials_size: 0, draft_type: "normal",
+      tm_draft_cloud_completed: null, tm_draft_cloud_modified: 0, tm_draft_create: Math.floor(timestamp / 1000),
+      tm_draft_modified: Math.floor(timestamp / 1000), tm_draft_removed: 0
+    };
+    fs.writeFileSync(path.join(projectPath, 'draft_info.json'), JSON.stringify(draftInfo, null, 2));
+
+    // Criar draft_meta_info.json
+    const draftMetaInfo = {
+      cloud_draft_cover: true, cloud_draft_sync: true, draft_cloud_last_action_download: false,
+      draft_cloud_purchase_info: "", draft_cloud_template_id: "", draft_cloud_tutorial_info: "",
+      draft_cloud_videocut_purchase_info: "", draft_cover: "",
+      draft_enterprise_info: { draft_enterprise_extra: "", draft_enterprise_id: "", draft_enterprise_name: "", enterprise_material: [] },
+      draft_fold_path: projectPath.replace(/\\/g, '/'), draft_id: newDraftId,
+      draft_is_ai_shorts: false, draft_is_article_video_draft: false, draft_is_cloud_temp_draft: false,
+      draft_is_from_deeplink: "false", draft_is_invisible: false, draft_is_web_article_video: false,
+      draft_materials: [
+        { type: 0, value: [] }, { type: 1, value: [] }, { type: 2, value: [] },
+        { type: 3, value: [] }, { type: 6, value: [] }, { type: 7, value: [] }, { type: 8, value: [] }
+      ],
+      draft_materials_copied_info: [], draft_name: projectName, draft_need_rename_folder: false,
+      draft_new_version: "", draft_removable_storage_device: "",
+      draft_root_path: capCutDrafts.replace(/\\/g, '/'), draft_segment_extra_info: [],
+      draft_timeline_materials_size_: 0, draft_type: "",
+      tm_draft_create: microTimestamp, tm_draft_modified: microTimestamp, tm_draft_removed: 0, tm_duration: 0
+    };
+    fs.writeFileSync(path.join(projectPath, 'draft_meta_info.json'), JSON.stringify(draftMetaInfo));
+
+    // Registrar no root_meta_info.json
+    const rootMetaPath = path.join(capCutDrafts, 'root_meta_info.json');
+    let rootMeta = { all_draft_store: [], draft_ids: 0, root_path: capCutDrafts.replace(/\\/g, '/') };
+    if (fs.existsSync(rootMetaPath)) {
+      try { rootMeta = JSON.parse(fs.readFileSync(rootMetaPath, 'utf-8')); } catch (e) { console.error('Error reading root_meta_info:', e); }
+    }
+
+    const newDraftEntry = {
+      cloud_draft_cover: true, cloud_draft_sync: true, draft_cloud_last_action_download: false,
+      draft_cloud_purchase_info: "", draft_cloud_template_id: "", draft_cloud_tutorial_info: "",
+      draft_cloud_videocut_purchase_info: "", draft_cover: "",
+      draft_fold_path: projectPath.replace(/\\/g, '/'), draft_id: newDraftId,
+      draft_is_ai_shorts: false, draft_is_cloud_temp_draft: false, draft_is_invisible: false,
+      draft_is_web_article_video: false, draft_json_file: draftPath.replace(/\\/g, '/'),
+      draft_name: projectName, draft_new_version: "", draft_root_path: capCutDrafts.replace(/\\/g, '/'),
+      draft_timeline_materials_size: 0, draft_type: "", draft_web_article_video_enter_from: "",
+      streaming_edit_draft_ready: true, tm_draft_cloud_completed: "", tm_draft_cloud_entry_id: -1,
+      tm_draft_cloud_modified: 0, tm_draft_cloud_parent_entry_id: -1, tm_draft_cloud_space_id: -1,
+      tm_draft_cloud_user_id: -1, tm_draft_create: microTimestamp, tm_draft_modified: microTimestamp,
+      tm_draft_removed: 0, tm_duration: 0
+    };
+
+    rootMeta.all_draft_store.unshift(newDraftEntry);
+    rootMeta.draft_ids = (rootMeta.draft_ids || 0) + 1;
+    fs.writeFileSync(rootMetaPath, JSON.stringify(rootMeta));
+
+    return {
+      success: true,
+      path: projectPath,
+      name: projectName,
+      draftPath: draftPath,
+      templateName: path.basename(templatePath)
+    };
+  } catch (error) {
+    return { error: error.message };
+  }
+});
+
+// ============ DELETE PROJECT ============
+ipcMain.handle('delete-project', async (_, { projectPath }) => {
+  try {
+    if (!fs.existsSync(projectPath)) {
+      return { error: 'Projeto não encontrado' };
+    }
+
+    const projectName = path.basename(projectPath);
+
+    // Remover do root_meta_info.json primeiro
+    const capCutDrafts = path.join(app.getPath('appData'), '..', 'Local', 'CapCut', 'User Data', 'Projects', 'com.lveditor.draft');
+    const rootMetaPath = path.join(capCutDrafts, 'root_meta_info.json');
+    if (fs.existsSync(rootMetaPath)) {
+      const rootMeta = JSON.parse(fs.readFileSync(rootMetaPath, 'utf-8'));
+      rootMeta.all_draft_store = (rootMeta.all_draft_store || []).filter(
+        d => !d.draft_fold_path?.includes(projectName)
+      );
+      fs.writeFileSync(rootMetaPath, JSON.stringify(rootMeta));
+    }
+
+    // Deletar a pasta do projeto recursivamente
+    fs.rmSync(projectPath, { recursive: true, force: true });
+
+    return { success: true, deletedName: projectName };
+  } catch (error) {
+    return { error: error.message };
+  }
+});
+
+// ============ DELETE TRACKS BY TYPE ============
+ipcMain.handle('delete-tracks-by-type', async (_, { draftPath, trackTypes }) => {
+  try {
+    if (!fs.existsSync(draftPath)) {
+      return { error: 'Arquivo draft_content.json não encontrado' };
+    }
+
+    const content = JSON.parse(fs.readFileSync(draftPath, 'utf-8'));
+
+    // Contar tracks antes
+    const tracksBefore = (content.tracks || []).length;
+
+    // Filtrar tracks removendo os tipos especificados
+    content.tracks = (content.tracks || []).filter(track => !trackTypes.includes(track.type));
+
+    // Se removendo texto/legendas, limpar materials.texts também
+    if (trackTypes.includes('text')) {
+      if (content.materials) {
+        content.materials.texts = [];
+        content.materials.text_templates = [];
+      }
+    }
+
+    // Se removendo efeitos, limpar materials.video_effects
+    if (trackTypes.includes('effect')) {
+      if (content.materials) {
+        content.materials.video_effects = [];
+      }
+    }
+
+    // Se removendo filtros, limpar materials.material_animations com filtros
+    if (trackTypes.includes('filter')) {
+      if (content.materials) {
+        content.materials.filters = [];
+      }
+    }
+
+    // Atualizar timestamp
+    content.update_time = Math.floor(Date.now() / 1000);
+
+    const tracksAfter = (content.tracks || []).length;
+    const removedCount = tracksBefore - tracksAfter;
+
+    fs.writeFileSync(draftPath, JSON.stringify(content, null, 2));
+
+    return { success: true, removedCount, remainingTracks: tracksAfter };
+  } catch (error) {
+    return { error: error.message };
+  }
+});
+
+// ============ DELETE SPECIFIC TRACK ============
+ipcMain.handle('delete-track', async (_, { draftPath, trackIndex }) => {
+  try {
+    if (!fs.existsSync(draftPath)) {
+      return { error: 'Arquivo draft_content.json não encontrado' };
+    }
+
+    const content = JSON.parse(fs.readFileSync(draftPath, 'utf-8'));
+
+    if (!content.tracks || trackIndex < 0 || trackIndex >= content.tracks.length) {
+      return { error: 'Track não encontrada' };
+    }
+
+    const removedTrack = content.tracks[trackIndex];
+    content.tracks.splice(trackIndex, 1);
+    content.update_time = Math.floor(Date.now() / 1000);
+
+    fs.writeFileSync(draftPath, JSON.stringify(content, null, 2));
+
+    return { success: true, removedTrack: { type: removedTrack.type, index: trackIndex } };
+  } catch (error) {
+    return { error: error.message };
+  }
+});
+
 // ============ DIALOG HANDLERS ============
 ipcMain.handle('dialog:openFile', async (_, options) => {
   return dialog.showOpenDialog(mainWindow, options);

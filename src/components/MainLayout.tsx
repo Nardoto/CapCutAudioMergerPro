@@ -1,13 +1,12 @@
 import { useState, useEffect, useRef } from 'react'
 import { motion, AnimatePresence } from 'framer-motion'
-import { Zap, RefreshCw, FileText, HelpCircle, LogOut, FolderOpen, ChevronRight, Minus, Square, X, Download, ExternalLink, User as UserIcon, Crown, Undo2, Search, Clock, ChevronDown, Trash2, History, Film, Plus, Pencil, Check } from 'lucide-react'
+import { Zap, RefreshCw, FileText, HelpCircle, LogOut, FolderOpen, ChevronRight, Minus, Square, X, Download, ExternalLink, User as UserIcon, Crown, Undo2, Search, Clock, ChevronDown, Trash2, Film, Plus, Pencil, Check, Copy } from 'lucide-react'
 import type { User, TrackInfo, LogEntry } from '../types'
 import TimelinePreview from './TimelinePreview'
 import SyncPanel from './panels/SyncPanel'
 import LoopPanel from './panels/LoopPanel'
 import SrtPanel from './panels/SrtPanel'
 import MediaPanel from './panels/MediaPanel'
-import LogConsole from './LogConsole'
 import HelpModal from './HelpModal'
 
 const { ipcRenderer } = window.require ? window.require('electron') : { ipcRenderer: null }
@@ -39,6 +38,13 @@ export default function MainLayout({ user, onLogout }: MainLayoutProps) {
   const backupDropdownRef = useRef<HTMLDivElement>(null)
   const [isEditingName, setIsEditingName] = useState(false)
   const [editingName, setEditingName] = useState('')
+  const [showTemplatePicker, setShowTemplatePicker] = useState(false)
+  const [templateKeepMedia, setTemplateKeepMedia] = useState(true)
+  const [templateExpandEffects, setTemplateExpandEffects] = useState(true)
+  const [templateNewName, setTemplateNewName] = useState('')
+  const [selectedTemplate, setSelectedTemplate] = useState<{ name: string; path: string; modifiedAt: string } | null>(null)
+  const [showTrackManager, setShowTrackManager] = useState(false)
+  const [showDeleteConfirm, setShowDeleteConfirm] = useState(false)
   const [logs, setLogs] = useState<LogEntry[]>([
     { id: '1', type: 'info', message: 'CapCut Sync Pro v2.0 iniciado', timestamp: new Date() }
   ])
@@ -309,6 +315,78 @@ export default function MainLayout({ user, onLogout }: MainLayoutProps) {
     setIsEditingName(true)
   }
 
+  // Abrir template picker
+  const handleOpenTemplatePicker = async () => {
+    if (!ipcRenderer) { addLog('error', 'Electron IPC not available'); return }
+    addLog('info', 'Carregando projetos para usar como template...')
+
+    try {
+      const result = await ipcRenderer.invoke('detect-capcut-folder')
+      if (result.error) {
+        addLog('error', result.error)
+        return
+      }
+
+      if (result.projects.length === 0) {
+        addLog('warning', 'Nenhum projeto encontrado para usar como template')
+        return
+      }
+
+      setCapCutProjects(result.projects)
+      setTemplateNewName('')
+      setSelectedTemplate(null)
+      setShowTemplatePicker(true)
+      addLog('success', `${result.count} projetos disponíveis como template`)
+    } catch (error) {
+      addLog('error', 'Erro ao carregar templates: ' + error)
+    }
+  }
+
+  // Criar projeto a partir de template
+  const handleCreateFromTemplate = async () => {
+    if (!ipcRenderer || !selectedTemplate) return
+
+    const newName = templateNewName.trim() || `${selectedTemplate.name}_copia`
+    addLog('info', `Criando projeto a partir de "${selectedTemplate.name}"...`)
+    setShowTemplatePicker(false)
+
+    try {
+      const result = await ipcRenderer.invoke('create-from-template', {
+        templatePath: selectedTemplate.path,
+        newName,
+        keepMedia: templateKeepMedia,
+        expandEffects: templateExpandEffects
+      })
+
+      if (result.error) {
+        addLog('error', result.error)
+        return
+      }
+
+      setProjectPath(result.path)
+      setProjectName(result.name)
+      setDraftPath(result.draftPath)
+      setTracks([])
+      setSelectedAudioTrack(0)
+
+      addLog('success', `Projeto criado a partir do template "${result.templateName}"`)
+      if (!templateKeepMedia) {
+        addLog('info', 'Mídias removidas - adicione novas mídias na aba MÍDIA')
+      }
+      if (templateExpandEffects && templateKeepMedia) {
+        addLog('info', 'Efeitos e filtros expandidos para cobrir toda a timeline')
+      }
+
+      // Analisar o novo projeto
+      const analyzeResult = await ipcRenderer.invoke('analyze-project', result.draftPath)
+      if (!analyzeResult.error) {
+        setTracks(analyzeResult.tracks)
+      }
+    } catch (error) {
+      addLog('error', 'Erro ao criar projeto: ' + error)
+    }
+  }
+
   // Criar novo projeto do zero
   const handleNewProject = async () => {
     if (!ipcRenderer) { addLog('error', 'Electron IPC not available'); return }
@@ -330,6 +408,90 @@ export default function MainLayout({ user, onLogout }: MainLayoutProps) {
       addLog('info', 'Agora adicione midias na aba MIDIA')
     } catch (error) {
       addLog('error', 'Erro ao criar projeto: ' + error)
+    }
+  }
+
+  // Deletar projeto atual
+  const handleDeleteProject = async () => {
+    if (!ipcRenderer || !projectPath) return
+
+    addLog('info', `Deletando projeto "${projectName}"...`)
+    setShowDeleteConfirm(false)
+
+    try {
+      const result = await ipcRenderer.invoke('delete-project', { projectPath })
+      if (result.error) {
+        addLog('error', result.error)
+        return
+      }
+
+      addLog('success', `Projeto "${result.deletedName}" deletado com sucesso`)
+      setProjectPath(null)
+      setProjectName(null)
+      setDraftPath(null)
+      setTracks([])
+      setSelectedAudioTrack(0)
+    } catch (error) {
+      addLog('error', 'Erro ao deletar projeto: ' + error)
+    }
+  }
+
+  // Deletar tracks por tipo
+  const handleDeleteTracksByType = async (trackTypes: string[]) => {
+    if (!ipcRenderer || !draftPath) return
+
+    const typeNames = trackTypes.map(t => {
+      if (t === 'text') return 'legendas'
+      if (t === 'effect') return 'efeitos'
+      if (t === 'filter') return 'filtros'
+      return t
+    }).join(', ')
+
+    addLog('info', `Removendo ${typeNames}...`)
+
+    try {
+      const result = await ipcRenderer.invoke('delete-tracks-by-type', { draftPath, trackTypes })
+      if (result.error) {
+        addLog('error', result.error)
+        return
+      }
+
+      addLog('success', `${result.removedCount} track(s) removida(s)`)
+
+      // Re-analisar o projeto
+      const analyzeResult = await ipcRenderer.invoke('analyze-project', draftPath)
+      if (!analyzeResult.error) {
+        setTracks(analyzeResult.tracks)
+      }
+
+      setShowTrackManager(false)
+    } catch (error) {
+      addLog('error', 'Erro ao remover tracks: ' + error)
+    }
+  }
+
+  // Deletar track específica por índice
+  const handleDeleteTrack = async (trackIndex: number) => {
+    if (!ipcRenderer || !draftPath) return
+
+    addLog('info', `Removendo track ${trackIndex + 1}...`)
+
+    try {
+      const result = await ipcRenderer.invoke('delete-track', { draftPath, trackIndex })
+      if (result.error) {
+        addLog('error', result.error)
+        return
+      }
+
+      addLog('success', `Track "${result.removedTrack.type}" removida`)
+
+      // Re-analisar o projeto
+      const analyzeResult = await ipcRenderer.invoke('analyze-project', draftPath)
+      if (!analyzeResult.error) {
+        setTracks(analyzeResult.tracks)
+      }
+    } catch (error) {
+      addLog('error', 'Erro ao remover track: ' + error)
     }
   }
 
@@ -500,16 +662,16 @@ export default function MainLayout({ user, onLogout }: MainLayoutProps) {
               <button
                 onClick={handleDetectCapCut}
                 disabled={isLoading}
-                className="btn-primary py-1.5 px-3 flex items-center gap-1.5 text-xs"
+                className="py-1.5 px-3 flex items-center gap-1.5 text-xs font-medium rounded-lg transition-all bg-gradient-to-r from-primary to-primary/80 text-white hover:brightness-110 disabled:opacity-50"
                 title="Detectar projetos do CapCut automaticamente"
               >
                 <Search className="w-3.5 h-3.5" />
-                {isLoading ? 'Analisando...' : 'Detectar CapCut'}
+                {isLoading ? 'Analisando...' : 'Detectar'}
               </button>
               <button
                 onClick={handleSelectFolder}
                 disabled={isLoading}
-                className="btn-secondary py-1.5 px-3 flex items-center gap-1.5 text-xs"
+                className="py-1.5 px-3 flex items-center gap-1.5 text-xs font-medium rounded-lg transition-all bg-white/10 text-text-secondary hover:bg-white/20 disabled:opacity-50"
                 title="Selecionar pasta manualmente"
               >
                 <FolderOpen className="w-3.5 h-3.5" />
@@ -518,12 +680,20 @@ export default function MainLayout({ user, onLogout }: MainLayoutProps) {
               <button
                 onClick={handleNewProject}
                 disabled={isLoading}
-                className="py-1.5 px-3 flex items-center gap-1.5 text-xs font-medium rounded-lg transition-all hover:brightness-110"
+                className="py-1.5 px-3 flex items-center gap-1.5 text-xs font-medium rounded-lg transition-all bg-white/10 text-text-secondary hover:bg-white/20 disabled:opacity-50"
                 title="Criar novo projeto do zero"
-                style={{ backgroundColor: '#22c55e', color: '#fff' }}
               >
                 <Plus className="w-3.5 h-3.5" />
-                Novo Projeto
+                Novo
+              </button>
+              <button
+                onClick={handleOpenTemplatePicker}
+                disabled={isLoading}
+                className="py-1.5 px-3 flex items-center gap-1.5 text-xs font-medium rounded-lg transition-all bg-white/10 text-text-secondary hover:bg-white/20 disabled:opacity-50"
+                title="Criar projeto a partir de um template existente"
+              >
+                <Copy className="w-3.5 h-3.5" />
+                Template
               </button>
 
               {projectPath && (
@@ -567,6 +737,13 @@ export default function MainLayout({ user, onLogout }: MainLayoutProps) {
                           title="Renomear projeto"
                         >
                           <Pencil className="w-3 h-3" />
+                        </button>
+                        <button
+                          onClick={() => setShowTrackManager(true)}
+                          className="p-1 hover:bg-orange-500/20 rounded text-text-muted hover:text-orange-400 transition-colors"
+                          title="Gerenciar tracks (apagar legendas, efeitos, filtros)"
+                        >
+                          <Trash2 className="w-3 h-3" />
                         </button>
                       </>
                     )}
@@ -613,18 +790,27 @@ export default function MainLayout({ user, onLogout }: MainLayoutProps) {
                 </>
               )}
 
-              {/* Undo dropdown */}
-              {canUndo && (
-                <div ref={backupDropdownRef} className="ml-auto relative">
-                  <button
-                    onClick={() => setShowBackupDropdown(!showBackupDropdown)}
-                    className="btn-secondary py-1.5 px-3 flex items-center gap-1.5 text-xs text-yellow-400 border-yellow-400/50 hover:bg-yellow-400/10"
-                    title="Ver histórico de backups"
-                  >
-                    <History className="w-3.5 h-3.5" />
-                    Desfazer ({backupCount})
-                    <ChevronDown className={`w-3 h-3 transition-transform ${showBackupDropdown ? 'rotate-180' : ''}`} />
-                  </button>
+              {/* Undo/Redo buttons */}
+              <div ref={backupDropdownRef} className="ml-auto flex items-center gap-1 relative">
+                {/* Undo button */}
+                <button
+                  onClick={() => canUndo && backups.length > 0 && handleUndo(backups[0].filename)}
+                  disabled={!canUndo}
+                  className={`p-1.5 rounded-lg transition-all ${canUndo ? 'bg-white/10 hover:bg-primary/20 text-primary' : 'bg-white/5 text-text-muted cursor-not-allowed'}`}
+                  title="Desfazer (Ctrl+Z)"
+                >
+                  <Undo2 className="w-4 h-4" />
+                </button>
+
+                {/* Backup history dropdown trigger */}
+                <button
+                  onClick={() => setShowBackupDropdown(!showBackupDropdown)}
+                  className={`p-1.5 rounded-lg transition-all ${canUndo ? 'bg-white/10 hover:bg-white/20 text-text-secondary' : 'bg-white/5 text-text-muted cursor-not-allowed'}`}
+                  title="Histórico de backups"
+                  disabled={!canUndo}
+                >
+                  <ChevronDown className={`w-3 h-3 transition-transform ${showBackupDropdown ? 'rotate-180' : ''}`} />
+                </button>
 
                   {/* Dropdown */}
                   <AnimatePresence>
@@ -686,8 +872,7 @@ export default function MainLayout({ user, onLogout }: MainLayoutProps) {
                       </motion.div>
                     )}
                   </AnimatePresence>
-                </div>
-              )}
+              </div>
             </div>
           </div>
 
@@ -697,12 +882,16 @@ export default function MainLayout({ user, onLogout }: MainLayoutProps) {
             <div className="flex-1 flex flex-col overflow-hidden p-2 gap-2 min-h-0">
               {/* Timeline Preview */}
               <div className="card p-2 flex-shrink min-h-[100px] max-h-[35vh] overflow-hidden flex flex-col">
-                <h3 className="text-[10px] font-semibold text-text-secondary mb-1 flex-shrink-0">PREVIEW DA TIMELINE (clique para selecionar referência)</h3>
+                <h3 className="text-[10px] font-semibold text-text-secondary mb-1 flex-shrink-0">
+                  PREVIEW DA TIMELINE
+                  <span className="text-text-muted font-normal ml-1">(passe o mouse para apagar tracks)</span>
+                </h3>
                 <div className="overflow-y-auto flex-1 pr-1">
                   <TimelinePreview
                     tracks={tracks}
                     selectedAudioTrack={selectedAudioTrack}
                     onTrackClick={handleTrackClick}
+                    onDeleteTrack={handleDeleteTrack}
                   />
                 </div>
               </div>
@@ -779,9 +968,86 @@ export default function MainLayout({ user, onLogout }: MainLayoutProps) {
               </div>
             </div>
 
-            {/* Log Console */}
-            <div className="w-64 border-l border-border-light flex-shrink-0">
-              <LogConsole logs={logs} />
+            {/* Projects Panel */}
+            <div className="w-72 border-l border-border-light flex-shrink-0 flex flex-col bg-gradient-to-b from-background-dark to-background-dark-alt">
+              {/* Banner de novidades */}
+              <div className="p-3 border-b border-border-light">
+                <div className="bg-gradient-to-r from-primary/20 to-primary/5 border border-primary/30 rounded-lg p-3 relative overflow-hidden">
+                  <div className="absolute top-0 right-0 w-20 h-20 bg-primary/10 rounded-full blur-2xl -mr-10 -mt-10" />
+                  <div className="relative">
+                    <div className="flex items-center gap-2 mb-1">
+                      <span className="text-[10px] bg-primary/30 text-primary px-1.5 py-0.5 rounded font-medium">NOVO</span>
+                    </div>
+                    <p className="text-xs text-white font-medium">Sistema de Templates</p>
+                    <p className="text-[10px] text-text-muted mt-0.5">Crie projetos a partir de templates existentes</p>
+                  </div>
+                </div>
+              </div>
+
+              {/* Lista de projetos */}
+              <div className="flex-1 overflow-hidden flex flex-col">
+                <div className="p-3 border-b border-border-light flex items-center justify-between">
+                  <span className="text-xs font-medium text-white">Projetos CapCut</span>
+                  <button
+                    onClick={handleDetectCapCut}
+                    className="text-[10px] text-primary hover:text-primary/80 flex items-center gap-1"
+                  >
+                    <RefreshCw className="w-3 h-3" />
+                    Atualizar
+                  </button>
+                </div>
+                <div className="flex-1 overflow-y-auto p-2">
+                  {capCutProjects.length === 0 ? (
+                    <div className="text-center py-8">
+                      <FolderOpen className="w-8 h-8 text-text-muted mx-auto mb-2 opacity-30" />
+                      <p className="text-xs text-text-muted">Clique em "Detectar"</p>
+                      <p className="text-[10px] text-text-muted">para carregar projetos</p>
+                    </div>
+                  ) : (
+                    <div className="space-y-1">
+                      {capCutProjects.slice(0, 10).map((project) => (
+                        <button
+                          key={project.path}
+                          onClick={() => handleSelectProject(project)}
+                          className={`w-full p-2 rounded-lg text-left transition-all ${
+                            projectPath === project.path
+                              ? 'bg-primary/20 border border-primary/50'
+                              : 'bg-white/5 hover:bg-white/10 border border-transparent'
+                          }`}
+                        >
+                          <div className="flex items-center gap-2">
+                            <div className={`w-6 h-6 rounded flex items-center justify-center flex-shrink-0 ${
+                              projectPath === project.path ? 'bg-primary/30' : 'bg-white/10'
+                            }`}>
+                              <Film className="w-3 h-3 text-primary" />
+                            </div>
+                            <div className="min-w-0 flex-1">
+                              <span className={`text-xs block truncate ${
+                                projectPath === project.path ? 'text-primary font-medium' : 'text-white'
+                              }`}>
+                                {project.name}
+                              </span>
+                              <span className="text-[9px] text-text-muted flex items-center gap-1">
+                                <Clock className="w-2.5 h-2.5" />
+                                {formatRelativeDate(project.modifiedAt)}
+                              </span>
+                            </div>
+                            {projectPath === project.path && (
+                              <button
+                                onClick={(e) => { e.stopPropagation(); setShowDeleteConfirm(true); }}
+                                className="p-1 hover:bg-red-500/20 rounded text-text-muted hover:text-red-400"
+                                title="Deletar projeto"
+                              >
+                                <Trash2 className="w-3 h-3" />
+                              </button>
+                            )}
+                          </div>
+                        </button>
+                      ))}
+                    </div>
+                  )}
+                </div>
+              </div>
             </div>
           </div>
         </div>
@@ -894,6 +1160,408 @@ export default function MainLayout({ user, onLogout }: MainLayoutProps) {
                 >
                   Cancelar
                 </button>
+              </div>
+            </motion.div>
+          </>
+        )}
+      </AnimatePresence>
+
+      {/* Template Picker Modal */}
+      <AnimatePresence>
+        {showTemplatePicker && (
+          <>
+            {/* Backdrop */}
+            <motion.div
+              initial={{ opacity: 0 }}
+              animate={{ opacity: 1 }}
+              exit={{ opacity: 0 }}
+              className="fixed inset-0 bg-black/70 z-50"
+              onClick={() => setShowTemplatePicker(false)}
+            />
+
+            {/* Modal */}
+            <motion.div
+              initial={{ opacity: 0, scale: 0.95 }}
+              animate={{ opacity: 1, scale: 1 }}
+              exit={{ opacity: 0, scale: 0.95 }}
+              className="fixed inset-x-4 top-16 bottom-16 md:inset-x-16 bg-background-dark border border-border-light rounded-xl z-50 flex flex-col overflow-hidden"
+            >
+              {/* Header */}
+              <div className="flex items-center justify-between p-4 border-b border-border-light">
+                <div className="flex items-center gap-3">
+                  <div className="w-10 h-10 rounded-xl flex items-center justify-center" style={{ backgroundColor: '#8b5cf620' }}>
+                    <Copy className="w-5 h-5" style={{ color: '#8b5cf6' }} />
+                  </div>
+                  <div>
+                    <h2 className="text-lg font-bold text-white">Criar a partir de Template</h2>
+                    <p className="text-xs text-text-muted">
+                      {selectedTemplate
+                        ? `Template selecionado: ${selectedTemplate.name}`
+                        : 'Selecione um projeto para usar como base'}
+                    </p>
+                  </div>
+                </div>
+                <button
+                  onClick={() => setShowTemplatePicker(false)}
+                  className="p-2 hover:bg-white/10 rounded-lg transition-colors"
+                >
+                  <X className="w-5 h-5 text-text-secondary" />
+                </button>
+              </div>
+
+              <div className="flex-1 flex overflow-hidden">
+                {/* Projects List - Left side */}
+                <div className="w-1/2 border-r border-border-light overflow-auto p-2">
+                  <div className="text-[10px] text-text-muted uppercase tracking-wider mb-2 px-2">Escolha um template</div>
+                  <div className="grid gap-1">
+                    {capCutProjects.map((project, idx) => (
+                      <button
+                        key={project.path}
+                        onClick={() => setSelectedTemplate(project)}
+                        className={`w-full p-3 rounded-lg transition-all text-left ${
+                          selectedTemplate?.path === project.path
+                            ? 'bg-purple-500/20 border-2 border-purple-500'
+                            : 'bg-white/5 hover:bg-purple-500/10 border border-border-light hover:border-purple-500/50'
+                        }`}
+                      >
+                        <div className="flex items-center gap-3">
+                          <div className={`w-8 h-8 rounded-lg flex items-center justify-center flex-shrink-0 ${
+                            selectedTemplate?.path === project.path ? 'bg-purple-500/40' : 'bg-purple-500/20'
+                          }`}>
+                            <Copy className="w-4 h-4 text-purple-400" />
+                          </div>
+                          <div className="min-w-0 flex-1">
+                            <span className={`font-medium block truncate ${
+                              selectedTemplate?.path === project.path ? 'text-purple-300' : 'text-white'
+                            }`}>
+                              {project.name}
+                            </span>
+                            <div className="flex items-center gap-2 text-[10px] text-text-muted">
+                              <Clock className="w-3 h-3 flex-shrink-0" />
+                              <span>{formatRelativeDate(project.modifiedAt)}</span>
+                            </div>
+                          </div>
+                          {idx === 0 && (
+                            <span className="text-[9px] bg-green-500/20 text-green-400 px-2 py-0.5 rounded-full">
+                              Recente
+                            </span>
+                          )}
+                        </div>
+                      </button>
+                    ))}
+                  </div>
+                </div>
+
+                {/* Options - Right side */}
+                <div className="w-1/2 p-4 flex flex-col">
+                  {selectedTemplate ? (
+                    <>
+                      <div className="text-[10px] text-text-muted uppercase tracking-wider mb-3">Configurações do novo projeto</div>
+
+                      {/* Template selecionado info */}
+                      <div className="bg-purple-500/10 border border-purple-500/30 rounded-lg p-3 mb-4">
+                        <div className="flex items-center gap-2 mb-2">
+                          <Copy className="w-4 h-4 text-purple-400" />
+                          <span className="text-sm font-medium text-purple-300">Template:</span>
+                        </div>
+                        <span className="text-white font-medium">{selectedTemplate.name}</span>
+                        <div className="text-[10px] text-text-muted mt-1">
+                          Modificado: {formatRelativeDate(selectedTemplate.modifiedAt)}
+                        </div>
+                      </div>
+
+                      {/* Nome do novo projeto */}
+                      <div className="mb-4">
+                        <label className="text-xs text-text-secondary block mb-1.5">Nome do novo projeto:</label>
+                        <input
+                          type="text"
+                          value={templateNewName}
+                          onChange={(e) => setTemplateNewName(e.target.value)}
+                          placeholder={`${selectedTemplate.name}_copia`}
+                          className="w-full bg-white/10 border border-border-light rounded-lg px-3 py-2 text-white text-sm focus:outline-none focus:ring-2 focus:ring-purple-500 focus:border-transparent"
+                        />
+                      </div>
+
+                      {/* Opções */}
+                      <div className="space-y-3">
+                        <label className="flex items-start gap-3 cursor-pointer group p-2 rounded-lg hover:bg-white/5">
+                          <input
+                            type="checkbox"
+                            checked={templateKeepMedia}
+                            onChange={(e) => setTemplateKeepMedia(e.target.checked)}
+                            className="w-5 h-5 mt-0.5 rounded border-border-light bg-white/10 text-purple-500 focus:ring-purple-500"
+                          />
+                          <div>
+                            <span className="text-sm text-white block">Manter mídias</span>
+                            <span className="text-[11px] text-text-muted">Copia vídeos, áudios e imagens da timeline</span>
+                          </div>
+                        </label>
+
+                        <label className={`flex items-start gap-3 cursor-pointer group p-2 rounded-lg hover:bg-white/5 ${!templateKeepMedia ? 'opacity-40' : ''}`}>
+                          <input
+                            type="checkbox"
+                            checked={templateExpandEffects}
+                            onChange={(e) => setTemplateExpandEffects(e.target.checked)}
+                            disabled={!templateKeepMedia}
+                            className="w-5 h-5 mt-0.5 rounded border-border-light bg-white/10 text-purple-500 focus:ring-purple-500"
+                          />
+                          <div>
+                            <span className="text-sm text-white block">Expandir efeitos/filtros</span>
+                            <span className="text-[11px] text-text-muted">Ajusta efeitos e filtros para cobrir toda a timeline</span>
+                          </div>
+                        </label>
+                      </div>
+
+                      <div className="flex-1" />
+
+                      {/* Resumo */}
+                      <div className="bg-white/5 rounded-lg p-3 mt-4 text-xs text-text-muted">
+                        {templateKeepMedia
+                          ? '✓ O projeto será copiado com todas as mídias e configurações'
+                          : '○ Apenas estilos, efeitos e configurações serão copiados (timeline vazia)'}
+                      </div>
+                    </>
+                  ) : (
+                    <div className="flex-1 flex items-center justify-center text-center">
+                      <div>
+                        <Copy className="w-12 h-12 text-text-muted mx-auto mb-3 opacity-30" />
+                        <p className="text-text-muted text-sm">Selecione um projeto à esquerda</p>
+                        <p className="text-text-muted text-xs mt-1">para usar como template</p>
+                      </div>
+                    </div>
+                  )}
+                </div>
+              </div>
+
+              {/* Footer */}
+              <div className="p-3 border-t border-border-light flex justify-between items-center">
+                <button
+                  onClick={() => setShowTemplatePicker(false)}
+                  className="btn-secondary py-2 px-4 text-xs"
+                >
+                  Cancelar
+                </button>
+                <button
+                  onClick={handleCreateFromTemplate}
+                  disabled={!selectedTemplate}
+                  className={`py-2 px-6 flex items-center gap-2 text-sm font-medium rounded-lg transition-all ${
+                    selectedTemplate
+                      ? 'bg-purple-500 hover:bg-purple-600 text-white'
+                      : 'bg-white/10 text-text-muted cursor-not-allowed'
+                  }`}
+                >
+                  <Plus className="w-4 h-4" />
+                  Criar Projeto
+                </button>
+              </div>
+            </motion.div>
+          </>
+        )}
+      </AnimatePresence>
+
+      {/* Track Manager Modal */}
+      <AnimatePresence>
+        {showTrackManager && (
+          <>
+            {/* Backdrop */}
+            <motion.div
+              initial={{ opacity: 0 }}
+              animate={{ opacity: 1 }}
+              exit={{ opacity: 0 }}
+              className="fixed inset-0 bg-black/80 z-50"
+              onClick={() => setShowTrackManager(false)}
+            />
+
+            {/* Modal */}
+            <motion.div
+              initial={{ opacity: 0, scale: 0.9, y: 20 }}
+              animate={{ opacity: 1, scale: 1, y: 0 }}
+              exit={{ opacity: 0, scale: 0.9, y: 20 }}
+              className="fixed left-1/2 top-1/2 -translate-x-1/2 -translate-y-1/2 w-[480px] bg-gradient-to-b from-background-dark to-background-dark-alt border border-border-light rounded-2xl z-50 flex flex-col overflow-hidden shadow-2xl"
+            >
+              {/* Header with gradient */}
+              <div className="relative p-5 border-b border-border-light bg-gradient-to-r from-primary/10 to-transparent">
+                <div className="absolute top-0 right-0 w-32 h-32 bg-primary/5 rounded-full blur-3xl -mr-16 -mt-16" />
+                <div className="flex items-center justify-between relative">
+                  <div className="flex items-center gap-3">
+                    <div className="w-12 h-12 rounded-xl flex items-center justify-center bg-gradient-to-br from-primary/30 to-primary/10 border border-primary/20">
+                      <Trash2 className="w-6 h-6 text-primary" />
+                    </div>
+                    <div>
+                      <h2 className="text-lg font-bold text-white">Gerenciar Tracks</h2>
+                      <p className="text-xs text-text-muted">Remova elementos indesejados do projeto</p>
+                    </div>
+                  </div>
+                  <button
+                    onClick={() => setShowTrackManager(false)}
+                    className="p-2 hover:bg-white/10 rounded-lg transition-colors"
+                  >
+                    <X className="w-5 h-5 text-text-secondary" />
+                  </button>
+                </div>
+              </div>
+
+              {/* Content */}
+              <div className="p-5 space-y-5">
+                {/* Ações rápidas por tipo */}
+                <div>
+                  <div className="text-[10px] text-text-muted uppercase tracking-wider mb-3 font-medium">Apagar por tipo</div>
+                  <div className="grid grid-cols-3 gap-3">
+                    <button
+                      onClick={() => handleDeleteTracksByType(['text'])}
+                      className="p-4 bg-white/5 border border-border-light rounded-xl hover:bg-primary/10 hover:border-primary/30 transition-all text-center group"
+                    >
+                      <FileText className="w-6 h-6 text-primary mx-auto mb-2 group-hover:scale-110 transition-transform" />
+                      <span className="text-sm text-white block font-medium">Legendas</span>
+                      <span className="text-[10px] text-text-muted">Textos/Subtitles</span>
+                    </button>
+                    <button
+                      onClick={() => handleDeleteTracksByType(['effect'])}
+                      className="p-4 bg-white/5 border border-border-light rounded-xl hover:bg-primary/10 hover:border-primary/30 transition-all text-center group"
+                    >
+                      <Zap className="w-6 h-6 text-primary mx-auto mb-2 group-hover:scale-110 transition-transform" />
+                      <span className="text-sm text-white block font-medium">Efeitos</span>
+                      <span className="text-[10px] text-text-muted">Video effects</span>
+                    </button>
+                    <button
+                      onClick={() => handleDeleteTracksByType(['filter'])}
+                      className="p-4 bg-white/5 border border-border-light rounded-xl hover:bg-primary/10 hover:border-primary/30 transition-all text-center group"
+                    >
+                      <Film className="w-6 h-6 text-primary mx-auto mb-2 group-hover:scale-110 transition-transform" />
+                      <span className="text-sm text-white block font-medium">Filtros</span>
+                      <span className="text-[10px] text-text-muted">Color filters</span>
+                    </button>
+                  </div>
+                </div>
+
+                {/* Lista de tracks individuais */}
+                <div>
+                  <div className="text-[10px] text-text-muted uppercase tracking-wider mb-3 font-medium flex items-center gap-2">
+                    <span>Tracks na timeline</span>
+                    <span className="bg-white/10 px-2 py-0.5 rounded-full text-white">{tracks.length}</span>
+                  </div>
+                  {tracks.length === 0 ? (
+                    <div className="text-center py-8 bg-white/5 rounded-xl border border-border-light">
+                      <div className="w-12 h-12 rounded-full bg-white/10 flex items-center justify-center mx-auto mb-3">
+                        <Film className="w-6 h-6 text-text-muted" />
+                      </div>
+                      <span className="text-text-muted text-sm">Nenhuma track encontrada</span>
+                    </div>
+                  ) : (
+                    <div className="space-y-1.5 max-h-[200px] overflow-auto pr-1 scrollbar-thin">
+                      {tracks.map((track, idx) => (
+                        <div
+                          key={idx}
+                          className="flex items-center justify-between p-3 bg-white/5 border border-border-light rounded-xl hover:bg-white/10 hover:border-white/20 transition-all group"
+                        >
+                          <div className="flex items-center gap-3">
+                            <div className={`w-8 h-8 rounded-lg flex items-center justify-center ${
+                              track.type === 'video' ? 'bg-gradient-to-br from-green-500/30 to-green-500/10' :
+                              track.type === 'audio' ? 'bg-gradient-to-br from-cyan-500/30 to-cyan-500/10' :
+                              track.type === 'text' ? 'bg-gradient-to-br from-orange-500/30 to-orange-500/10' :
+                              track.type === 'effect' ? 'bg-gradient-to-br from-purple-500/30 to-purple-500/10' :
+                              track.type === 'filter' ? 'bg-gradient-to-br from-blue-500/30 to-blue-500/10' :
+                              'bg-gradient-to-br from-gray-500/30 to-gray-500/10'
+                            }`}>
+                              {track.type === 'video' && <Film className="w-4 h-4 text-green-400" />}
+                              {track.type === 'audio' && <RefreshCw className="w-4 h-4 text-cyan-400" />}
+                              {track.type === 'text' && <FileText className="w-4 h-4 text-orange-400" />}
+                              {track.type === 'effect' && <Zap className="w-4 h-4 text-purple-400" />}
+                              {track.type === 'filter' && <Film className="w-4 h-4 text-blue-400" />}
+                            </div>
+                            <div>
+                              <span className="text-sm text-white capitalize font-medium">{track.type}</span>
+                              <span className="text-[10px] text-text-muted block">
+                                {track.segments} segmento{track.segments !== 1 ? 's' : ''}
+                              </span>
+                            </div>
+                          </div>
+                          <button
+                            onClick={() => handleDeleteTrack(idx)}
+                            className="p-2 bg-red-500/10 hover:bg-red-500/20 rounded-lg text-red-400 hover:text-red-300 transition-all opacity-0 group-hover:opacity-100"
+                            title="Apagar esta track"
+                          >
+                            <Trash2 className="w-4 h-4" />
+                          </button>
+                        </div>
+                      ))}
+                    </div>
+                  )}
+                </div>
+
+                {/* Deletar projeto */}
+                <div className="border-t border-border-light pt-4">
+                  <div className="text-[10px] text-text-muted uppercase tracking-wider mb-2">Zona de perigo</div>
+                  <button
+                    onClick={() => setShowDeleteConfirm(true)}
+                    className="w-full p-3 bg-red-500/10 border border-red-500/30 rounded-lg hover:bg-red-500/20 transition-colors flex items-center gap-3"
+                  >
+                    <Trash2 className="w-5 h-5 text-red-400" />
+                    <div className="text-left">
+                      <span className="text-sm text-red-400 block font-medium">Deletar projeto inteiro</span>
+                      <span className="text-[10px] text-text-muted">Remove o projeto "{projectName}" permanentemente</span>
+                    </div>
+                  </button>
+                </div>
+              </div>
+
+              {/* Footer */}
+              <div className="p-4 border-t border-border-light bg-gradient-to-r from-white/5 to-transparent">
+                <button
+                  onClick={() => setShowTrackManager(false)}
+                  className="w-full py-2.5 bg-gradient-to-r from-white/10 to-white/5 hover:from-white/15 hover:to-white/10 border border-border-light rounded-xl text-sm text-white font-medium transition-all"
+                >
+                  Fechar
+                </button>
+              </div>
+            </motion.div>
+          </>
+        )}
+      </AnimatePresence>
+
+      {/* Delete Confirm Modal */}
+      <AnimatePresence>
+        {showDeleteConfirm && (
+          <>
+            {/* Backdrop */}
+            <motion.div
+              initial={{ opacity: 0 }}
+              animate={{ opacity: 1 }}
+              exit={{ opacity: 0 }}
+              className="fixed inset-0 bg-black/80 z-[60]"
+              onClick={() => setShowDeleteConfirm(false)}
+            />
+
+            {/* Modal */}
+            <motion.div
+              initial={{ opacity: 0, scale: 0.95 }}
+              animate={{ opacity: 1, scale: 1 }}
+              exit={{ opacity: 0, scale: 0.95 }}
+              className="fixed left-1/2 top-1/2 -translate-x-1/2 -translate-y-1/2 w-[400px] bg-background-dark border border-red-500/30 rounded-xl z-[60] overflow-hidden"
+            >
+              <div className="p-6 text-center">
+                <div className="w-16 h-16 rounded-full bg-red-500/20 flex items-center justify-center mx-auto mb-4">
+                  <Trash2 className="w-8 h-8 text-red-400" />
+                </div>
+                <h3 className="text-lg font-bold text-white mb-2">Deletar projeto?</h3>
+                <p className="text-sm text-text-muted mb-6">
+                  Tem certeza que deseja deletar o projeto <span className="text-red-400 font-medium">"{projectName}"</span>?
+                  <br />Esta ação não pode ser desfeita.
+                </p>
+                <div className="flex gap-3">
+                  <button
+                    onClick={() => setShowDeleteConfirm(false)}
+                    className="flex-1 btn-secondary py-2.5 text-sm"
+                  >
+                    Cancelar
+                  </button>
+                  <button
+                    onClick={handleDeleteProject}
+                    className="flex-1 py-2.5 bg-red-500 hover:bg-red-600 text-white text-sm font-medium rounded-lg transition-colors"
+                  >
+                    Sim, deletar
+                  </button>
+                </div>
               </div>
             </motion.div>
           </>

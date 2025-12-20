@@ -228,28 +228,26 @@ export default function MediaPanel({ onLog, draftPath, onReanalyze, selectedAudi
 
   return (
     <div className="h-full flex flex-col gap-4">
-      {/* Header com tipo de midia - cores do CapCut */}
+      {/* Header com tipo de midia */}
       <div className="flex items-center gap-2">
         <button
           onClick={() => setMediaType('video_image')}
-          className={`flex items-center gap-2 px-4 py-2 rounded-lg transition-all ${
+          className={`flex items-center gap-2 px-4 py-2 rounded-lg text-sm transition-all ${
             mediaType === 'video_image'
-              ? 'text-white font-medium'
-              : 'bg-gray-700 text-gray-300 hover:bg-gray-600'
+              ? 'bg-gradient-to-r from-primary to-primary/80 text-white font-medium'
+              : 'bg-white/10 text-text-secondary hover:bg-white/20'
           }`}
-          style={mediaType === 'video_image' ? { backgroundColor: '#175d62' } : {}}
         >
           <Film className="w-4 h-4" />
           Videos / Imagens
         </button>
         <button
           onClick={() => setMediaType('audio')}
-          className={`flex items-center gap-2 px-4 py-2 rounded-lg transition-all ${
+          className={`flex items-center gap-2 px-4 py-2 rounded-lg text-sm transition-all ${
             mediaType === 'audio'
-              ? 'text-white font-medium'
-              : 'bg-gray-700 text-gray-300 hover:bg-gray-600'
+              ? 'bg-gradient-to-r from-primary to-primary/80 text-white font-medium'
+              : 'bg-white/10 text-text-secondary hover:bg-white/20'
           }`}
-          style={mediaType === 'audio' ? { backgroundColor: '#0e3058' } : {}}
         >
           <Music className="w-4 h-4" />
           Audios
@@ -257,34 +255,34 @@ export default function MediaPanel({ onLog, draftPath, onReanalyze, selectedAudi
       </div>
 
       {/* Toggle de ordem */}
-      <div className="flex items-center gap-2 p-3 bg-gray-800/50 rounded-lg">
-        <span className="text-sm text-gray-300 mr-2">Ordem:</span>
+      <div className="flex items-center gap-2 p-3 bg-white/5 rounded-lg border border-border-light">
+        <span className="text-xs text-text-muted mr-2">Ordem:</span>
         <button
           onClick={() => setOrderMode('alphabetic')}
-          className={`flex items-center gap-2 px-3 py-1.5 rounded-lg text-sm transition-all ${
+          className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs transition-all ${
             orderMode === 'alphabetic'
-              ? 'bg-purple-600 text-white font-medium'
-              : 'bg-gray-700 text-gray-300 hover:bg-gray-600'
+              ? 'bg-gradient-to-r from-primary to-primary/80 text-white font-medium'
+              : 'bg-white/10 text-text-secondary hover:bg-white/20'
           }`}
         >
-          <ArrowDownAZ className="w-4 h-4" />
+          <ArrowDownAZ className="w-3.5 h-3.5" />
           A-Z
         </button>
         <button
           onClick={() => setOrderMode('random')}
-          className={`flex items-center gap-2 px-3 py-1.5 rounded-lg text-sm transition-all ${
+          className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs transition-all ${
             orderMode === 'random'
-              ? 'bg-orange-600 text-white font-medium'
-              : 'bg-gray-700 text-gray-300 hover:bg-gray-600'
+              ? 'bg-gradient-to-r from-primary to-primary/80 text-white font-medium'
+              : 'bg-white/10 text-text-secondary hover:bg-white/20'
           }`}
         >
-          <Shuffle className="w-4 h-4" />
+          <Shuffle className="w-3.5 h-3.5" />
           Aleatória
         </button>
         {orderMode === 'random' && mediaFiles.length > 0 && (
           <button
             onClick={reshuffleFiles}
-            className="ml-auto px-2 py-1 bg-orange-600/50 hover:bg-orange-600 rounded text-xs flex items-center gap-1"
+            className="ml-auto px-2 py-1.5 bg-white/10 hover:bg-primary/20 text-text-secondary hover:text-primary rounded-lg text-xs flex items-center gap-1 transition-all"
           >
             <RefreshCw className="w-3 h-3" />
             Reembaralhar

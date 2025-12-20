@@ -1,10 +1,12 @@
-import { useMemo } from 'react'
+import { useMemo, useState } from 'react'
+import { X, Trash2 } from 'lucide-react'
 import type { TrackInfo } from '../types'
 
 interface TimelinePreviewProps {
   tracks: TrackInfo[]
   selectedAudioTrack: number
   onTrackClick?: (trackIndex: number, trackType: string) => void
+  onDeleteTrack?: (trackIndex: number) => void
 }
 
 // Cores exatas do CapCut (extraídas da interface)
@@ -36,7 +38,10 @@ interface EnrichedSegment {
   materialName?: string
 }
 
-export default function TimelinePreview({ tracks, selectedAudioTrack, onTrackClick }: TimelinePreviewProps) {
+export default function TimelinePreview({ tracks, selectedAudioTrack, onTrackClick, onDeleteTrack }: TimelinePreviewProps) {
+  const [hoveredTrack, setHoveredTrack] = useState<number | null>(null)
+  const [confirmDelete, setConfirmDelete] = useState<number | null>(null)
+
   const sortedTracks = useMemo(() => {
     const order = ['filter', 'effect', 'sticker', 'text', 'subtitle', 'video', 'audio']
     return [...tracks].sort((a, b) => {
@@ -76,16 +81,47 @@ export default function TimelinePreview({ tracks, selectedAudioTrack, onTrackCli
 
           const isClickable = track.type === 'audio' && onTrackClick
 
+          const isHovered = hoveredTrack === track.index
+          const isConfirming = confirmDelete === track.index
+
           return (
             <div
               key={track.index}
-              className={`flex items-center gap-2 ${isClickable ? 'cursor-pointer hover:bg-white/5 rounded-lg transition-colors' : ''}`}
+              className={`flex items-center gap-2 py-0.5 rounded-lg transition-all ${isClickable ? 'cursor-pointer' : ''} ${isHovered ? 'bg-white/10' : 'hover:bg-white/5'}`}
               onClick={() => isClickable && onTrackClick(track.index, track.type)}
+              onMouseEnter={() => setHoveredTrack(track.index)}
+              onMouseLeave={() => { setHoveredTrack(null); setConfirmDelete(null) }}
               title={isClickable ? 'Clique para selecionar como referência' : undefined}
             >
-              {/* Track label */}
-              <div className="w-20 text-right pr-1 flex-shrink-0">
-                <span className="text-[9px] text-text-muted truncate block" title={track.name || trackLabels[track.type]}>
+              {/* Track label with delete option */}
+              <div className="w-20 text-right pr-1 flex-shrink-0 relative">
+                {isConfirming ? (
+                  <div className="flex items-center gap-1 justify-end">
+                    <button
+                      onClick={(e) => { e.stopPropagation(); onDeleteTrack?.(track.index); setConfirmDelete(null) }}
+                      className="p-0.5 bg-red-500 hover:bg-red-600 rounded text-white transition-colors"
+                      title="Confirmar exclusão"
+                    >
+                      <Trash2 className="w-3 h-3" />
+                    </button>
+                    <button
+                      onClick={(e) => { e.stopPropagation(); setConfirmDelete(null) }}
+                      className="p-0.5 bg-white/20 hover:bg-white/30 rounded text-white transition-colors"
+                      title="Cancelar"
+                    >
+                      <X className="w-3 h-3" />
+                    </button>
+                  </div>
+                ) : isHovered && onDeleteTrack ? (
+                  <button
+                    onClick={(e) => { e.stopPropagation(); setConfirmDelete(track.index) }}
+                    className="absolute right-1 top-1/2 -translate-y-1/2 p-0.5 bg-red-500/20 hover:bg-red-500/40 rounded text-red-400 transition-colors"
+                    title="Apagar track"
+                  >
+                    <Trash2 className="w-3 h-3" />
+                  </button>
+                ) : null}
+                <span className={`text-[9px] text-text-muted truncate block ${isHovered && onDeleteTrack && !isConfirming ? 'opacity-0' : ''}`} title={track.name || trackLabels[track.type]}>
                   {(track.name || trackLabels[track.type]).substring(0, 12)}
                 </span>
               </div>
