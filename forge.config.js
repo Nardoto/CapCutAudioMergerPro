@@ -6,12 +6,16 @@ module.exports = {
     asar: true,
     icon: './src/assets/icon',
     name: 'CapCut Sync Pro',
+    extraResource: ['./python'],
   },
   rebuildConfig: {},
   makers: [
     {
       name: '@electron-forge/maker-squirrel',
-      config: {},
+      config: {
+        setupIcon: './src/assets/icon.ico',
+        iconUrl: 'https://raw.githubusercontent.com/nardoto/capcut-sync-pro/main/icon.ico',
+      },
     },
     {
       name: '@electron-forge/maker-zip',

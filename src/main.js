@@ -120,9 +120,9 @@ function extractTextFromContent(content) {
 // Helper para executar o script Python
 function runPython(command) {
   // Em dev, __dirname aponta para .webpack/main, então usamos process.cwd()
-  // Em produção, usamos app.getAppPath() que aponta para o .asar/pasta do app
+  // Em produção, extraResource coloca os arquivos em process.resourcesPath
   const basePath = app.isPackaged
-    ? path.dirname(app.getPath('exe'))
+    ? process.resourcesPath
     : process.cwd();
 
   const pythonScript = path.join(basePath, 'python', 'sync_engine.py');
@@ -131,16 +131,8 @@ function runPython(command) {
   console.log('[Python] Script path:', pythonScript);
   console.log('[Python] Command:', command.action);
 
-  // Criar backup antes de modificar o arquivo
-  if (command.draftPath && ['sync', 'loop_video', 'loop_audio', 'insert_srt'].includes(command.action)) {
-    try {
-      const backup = command.draftPath + '.backup';
-      fs.copyFileSync(command.draftPath, backup);
-      console.log('[Backup] Created:', backup);
-    } catch (e) {
-      console.error('[Backup] Error:', e.message);
-    }
-  }
+  // Python script creates timestamped backups automatically
+  // No need for duplicate backup here
 
   try {
     const result = execSync(`python "${pythonScript}" "${cmdJson.replace(/"/g, '\\"')}"`, {
@@ -296,6 +288,70 @@ ipcMain.handle('select-srt-folder', async () => {
   return { path: folderPath, name: path.basename(folderPath), srtCount: srtFiles.length };
 });
 
+// ============ SCAN SRT FOLDER & MATCH WITH PROJECT ============
+ipcMain.handle('scan-srt-matches', async (_, { srtFolder, draftPath }) => {
+  try {
+    // Read project to get audio names
+    const content = fs.readFileSync(draftPath, 'utf-8');
+    const project = JSON.parse(content);
+    const audios = project.materials?.audios || [];
+    const audioMap = {};
+    audios.forEach(a => {
+      if (a.name) {
+        const baseName = path.basename(a.name, path.extname(a.name));
+        audioMap[baseName.toLowerCase()] = { id: a.id, name: a.name, baseName };
+      }
+    });
+
+    // Scan SRT folder
+    const files = fs.readdirSync(srtFolder);
+    const srtFiles = files.filter(f => f.toLowerCase().endsWith('.srt'));
+
+    // Match SRTs with audios
+    const matches = [];
+    const unmatched = [];
+
+    srtFiles.forEach(srtFile => {
+      const baseName = path.basename(srtFile, '.srt');
+      const match = audioMap[baseName.toLowerCase()];
+
+      // Count lines in SRT (rough estimate of subtitle count)
+      const srtPath = path.join(srtFolder, srtFile);
+      const srtContent = fs.readFileSync(srtPath, 'utf-8');
+      const subtitleCount = (srtContent.match(/^\d+$/gm) || []).length;
+
+      if (match) {
+        matches.push({
+          srtFile,
+          srtPath,
+          audioName: match.name,
+          baseName,
+          subtitleCount,
+          matched: true
+        });
+      } else {
+        unmatched.push({
+          srtFile,
+          srtPath,
+          baseName,
+          subtitleCount,
+          matched: false
+        });
+      }
+    });
+
+    return {
+      matches,
+      unmatched,
+      totalSrt: srtFiles.length,
+      totalAudios: audios.length,
+      matchedCount: matches.length
+    };
+  } catch (error) {
+    return { error: error.message };
+  }
+});
+
 ipcMain.handle('window-minimize', () => mainWindow?.minimize());
 ipcMain.handle('window-maximize', () => { if (mainWindow?.isMaximized()) mainWindow.unmaximize(); else mainWindow?.maximize(); });
 ipcMain.handle('window-close', () => mainWindow?.close());
@@ -328,45 +384,183 @@ ipcMain.handle('loop-audio', async (_, { draftPath, trackIndex, targetDuration }
 });
 
 // ============ INSERT SRT (via Python) ============
-ipcMain.handle('insert-srt', async (_, { draftPath, srtFolder, createTitle }) => {
-  return runPython({ action: 'insert_srt', draftPath, srtFolder, createTitle });
+ipcMain.handle('insert-srt', async (_, { draftPath, srtFolders, createTitle, selectedFiles }) => {
+  // selectedFiles now contains full paths (srtPath), not just filenames
+  // srtFolders is an array of all scanned folders
+  return runPython({ action: 'insert_srt', draftPath, srtFolders, createTitle, selectedFilePaths: selectedFiles });
 });
 
-// ============ BACKUP / UNDO SYSTEM ============
-const backupPath = (draftPath) => draftPath + '.backup';
+// ============ BACKUP / UNDO SYSTEM (Multi-level) ============
 
+// List all backups for a project
+ipcMain.handle('list-backups', async (_, draftPath) => {
+  try {
+    const dir = path.dirname(draftPath);
+    const baseName = path.basename(draftPath, '.json');
+    const files = fs.readdirSync(dir);
+
+    // Find all backup files: draft_content_backup_YYYYMMDD_HHMMSS.json
+    const backups = files
+      .filter(f => f.startsWith(baseName + '_backup_') && f.endsWith('.json'))
+      .map(f => {
+        const fullPath = path.join(dir, f);
+        const stats = fs.statSync(fullPath);
+        // Extract timestamp from filename: draft_content_backup_20251220_123456.json
+        const match = f.match(/_backup_(\d{8})_(\d{6})\.json$/);
+        let timestamp = stats.mtime;
+        let displayDate = '';
+        if (match) {
+          const dateStr = match[1]; // 20251220
+          const timeStr = match[2]; // 123456
+          const year = dateStr.substring(0, 4);
+          const month = dateStr.substring(4, 6);
+          const day = dateStr.substring(6, 8);
+          const hour = timeStr.substring(0, 2);
+          const min = timeStr.substring(2, 4);
+          const sec = timeStr.substring(4, 6);
+          displayDate = `${day}/${month} ${hour}:${min}:${sec}`;
+          timestamp = new Date(`${year}-${month}-${day}T${hour}:${min}:${sec}`);
+        }
+        return {
+          filename: f,
+          path: fullPath,
+          timestamp: timestamp.getTime(),
+          displayDate,
+          size: stats.size
+        };
+      })
+      .sort((a, b) => b.timestamp - a.timestamp); // Most recent first
+
+    return { backups, count: backups.length };
+  } catch (error) {
+    return { backups: [], count: 0, error: error.message };
+  }
+});
+
+// Check if any backups exist
 ipcMain.handle('check-backup', async (_, draftPath) => {
   try {
-    const backup = backupPath(draftPath);
-    const hasBackup = fs.existsSync(backup);
+    const dir = path.dirname(draftPath);
+    const baseName = path.basename(draftPath, '.json');
+    const files = fs.readdirSync(dir);
+    const hasBackup = files.some(f => f.startsWith(baseName + '_backup_') && f.endsWith('.json'));
     return { hasBackup };
   } catch (error) {
     return { hasBackup: false, error: error.message };
   }
 });
 
-ipcMain.handle('undo-changes', async (_, draftPath) => {
+// Restore a specific backup
+ipcMain.handle('undo-changes', async (_, draftPath, backupFilename) => {
   try {
-    const backup = backupPath(draftPath);
-    if (!fs.existsSync(backup)) {
-      return { error: 'Nenhum backup encontrado para desfazer' };
+    const dir = path.dirname(draftPath);
+    let backupPath;
+
+    if (backupFilename) {
+      // Restore specific backup
+      backupPath = path.join(dir, backupFilename);
+    } else {
+      // Find most recent backup
+      const baseName = path.basename(draftPath, '.json');
+      const files = fs.readdirSync(dir);
+      const backups = files
+        .filter(f => f.startsWith(baseName + '_backup_') && f.endsWith('.json'))
+        .sort()
+        .reverse();
+      if (backups.length === 0) {
+        return { error: 'Nenhum backup encontrado para desfazer' };
+      }
+      backupPath = path.join(dir, backups[0]);
     }
+
+    if (!fs.existsSync(backupPath)) {
+      return { error: 'Backup não encontrado: ' + backupFilename };
+    }
+
     // Restore backup
-    fs.copyFileSync(backup, draftPath);
-    // Remove backup after restore
-    fs.unlinkSync(backup);
+    fs.copyFileSync(backupPath, draftPath);
+    return { success: true, restored: path.basename(backupPath) };
+  } catch (error) {
+    return { error: error.message };
+  }
+});
+
+// Delete a specific backup
+ipcMain.handle('delete-backup', async (_, draftPath, backupFilename) => {
+  try {
+    const dir = path.dirname(draftPath);
+    const backupPath = path.join(dir, backupFilename);
+    if (fs.existsSync(backupPath)) {
+      fs.unlinkSync(backupPath);
+    }
     return { success: true };
   } catch (error) {
     return { error: error.message };
   }
 });
 
-// Create backup before any modification (called by Python script)
-ipcMain.handle('create-backup', async (_, draftPath) => {
+// Delete all backups for a project
+ipcMain.handle('delete-all-backups', async (_, draftPath) => {
   try {
-    const backup = backupPath(draftPath);
-    fs.copyFileSync(draftPath, backup);
-    return { success: true };
+    const dir = path.dirname(draftPath);
+    const baseName = path.basename(draftPath, '.json');
+    const files = fs.readdirSync(dir);
+    let deleted = 0;
+
+    for (const f of files) {
+      if (f.startsWith(baseName + '_backup_') && f.endsWith('.json')) {
+        fs.unlinkSync(path.join(dir, f));
+        deleted++;
+      }
+    }
+
+    return { success: true, deleted };
+  } catch (error) {
+    return { error: error.message };
+  }
+});
+
+// ============ DETECT CAPCUT PROJECTS FOLDER ============
+ipcMain.handle('detect-capcut-folder', async () => {
+  try {
+    const os = require('node:os');
+    const homeDir = os.homedir();
+
+    // Caminho padrão do CapCut no Windows
+    const capCutPath = path.join(homeDir, 'AppData', 'Local', 'CapCut', 'User Data', 'Projects', 'com.lveditor.draft');
+
+    if (!fs.existsSync(capCutPath)) {
+      return { error: 'Pasta do CapCut não encontrada no caminho padrão' };
+    }
+
+    // Listar projetos (pastas que contêm draft_content.json)
+    const items = fs.readdirSync(capCutPath);
+    const projects = [];
+
+    for (const item of items) {
+      const itemPath = path.join(capCutPath, item);
+      const draftPath = path.join(itemPath, 'draft_content.json');
+
+      if (fs.statSync(itemPath).isDirectory() && fs.existsSync(draftPath)) {
+        // Pegar data de modificação
+        const stats = fs.statSync(draftPath);
+        projects.push({
+          name: item,
+          path: itemPath,
+          draftPath: draftPath,
+          modifiedAt: stats.mtime.toISOString(),
+        });
+      }
+    }
+
+    // Ordenar por data de modificação (mais recente primeiro)
+    projects.sort((a, b) => new Date(b.modifiedAt).getTime() - new Date(a.modifiedAt).getTime());
+
+    return {
+      capCutPath,
+      projects,
+      count: projects.length
+    };
   } catch (error) {
     return { error: error.message };
   }

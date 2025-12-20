@@ -2,14 +2,48 @@
   "name": "capcut-sync-pro",
   "productName": "CapCut Sync Pro",
   "version": "2.0.0",
-  "description": "My Electron application description",
+  "description": "Sincronize mídias e legendas no CapCut automaticamente",
   "main": ".webpack/main",
   "scripts": {
     "start": "electron-forge start",
     "package": "electron-forge package",
     "make": "electron-forge make",
     "publish": "electron-forge publish",
-    "lint": "echo \"No linting configured\""
+    "lint": "echo \"No linting configured\"",
+    "dist": "electron-forge package && electron-builder --prepackaged \"out/CapCut Sync Pro-win32-x64\" --win nsis"
+  },
+  "build": {
+    "appId": "com.nardoto.capcut-sync-pro",
+    "productName": "CapCut Sync Pro",
+    "directories": {
+      "output": "dist"
+    },
+    "extraResources": [
+      {
+        "from": "python",
+        "to": "python"
+      }
+    ],
+    "win": {
+      "icon": "src/assets/icon.ico",
+      "target": [
+        {
+          "target": "nsis",
+          "arch": ["x64"]
+        }
+      ]
+    },
+    "nsis": {
+      "oneClick": false,
+      "allowToChangeInstallationDirectory": true,
+      "installerIcon": "src/assets/icon.ico",
+      "uninstallerIcon": "src/assets/icon.ico",
+      "installerHeaderIcon": "src/assets/icon.ico",
+      "createDesktopShortcut": true,
+      "createStartMenuShortcut": true,
+      "shortcutName": "CapCut Sync Pro",
+      "language": "1046"
+    }
   },
   "keywords": [],
   "author": {
@@ -37,6 +71,7 @@
     "babel-loader": "^10.0.0",
     "css-loader": "^6.11.0",
     "electron": "39.2.7",
+    "electron-builder": "^26.0.12",
     "node-loader": "^2.1.0",
     "postcss": "^8.5.6",
     "postcss-loader": "^8.2.0",

@@ -338,7 +338,18 @@ def loop_audio(draft_path, track_index, target_duration):
     except Exception as e:
         return {'error': str(e)}
 
-def insert_srt(draft_path, srt_folder, create_title=True):
+def insert_srt(draft_path, srt_folders=None, create_title=True, selected_file_paths=None, srt_folder=None, selected_files=None):
+    """
+    Insere legendas SRT na timeline.
+
+    Args:
+        draft_path: Caminho do draft_content.json
+        srt_folders: Lista de pastas contendo arquivos .srt (novo formato)
+        create_title: Se True, cria texto de título para cada áudio
+        selected_file_paths: Lista de CAMINHOS COMPLETOS dos arquivos .srt a inserir (novo formato)
+        srt_folder: Pasta única (formato antigo, para compatibilidade)
+        selected_files: Lista de nomes de arquivos (formato antigo, para compatibilidade)
+    """
     try:
         logs = []
         backup_path = create_backup(draft_path)
@@ -354,25 +365,85 @@ def insert_srt(draft_path, srt_folder, create_title=True):
                     if s.get('material_id') in audios_mat:
                         audios.append({'name': audios_mat[s['material_id']].get('name', ''), 'start': s['target_timerange']['start'], 'duration': s['target_timerange']['duration']})
 
-        total, mats, spds, tracks = 0, [], [], []
-        for i, a in enumerate(audios):
-            srt_path = os.path.join(srt_folder, os.path.splitext(a['name'])[0] + '.srt')
-            segs = []
-            if create_title:
-                mid, m = criar_material_texto(limpar_nome_musica(a['name']), 7.0)
-                mats.append(m)
-                sg, sp = criar_segmento_texto(mid, a['start'], a['duration'], -0.85)
-                segs.append(sg); spds.append(sp)
-            if os.path.exists(srt_path):
-                gid = f"imp_{int(datetime.now().timestamp()*1000)}_{i}"
-                for leg in parse_srt(srt_path):
-                    if leg['start'] + leg['duration'] <= a['duration']:
-                        mid, m = criar_material_texto(leg['text'], 5.0, True, gid)
-                        mats.append(m)
-                        sg, sp = criar_segmento_texto(mid, a['start'] + leg['start'], leg['duration'], -0.75)
-                        segs.append(sg); spds.append(sp); total += 1
-            if segs:
-                tracks.append({"attribute": 0, "flag": 0, "id": str(uuid.uuid4()).upper(), "is_default_name": True, "name": "", "segments": segs, "type": "text"})
+        total, mats, spds = 0, [], []
+        all_subtitle_segs = []  # Todos os segmentos de legenda em uma única lista
+        all_title_segs = []     # Títulos separados (podem sobrepor legendas)
+
+        # NOVO FORMATO: Se selected_file_paths foi fornecido, usar caminhos completos
+        if selected_file_paths:
+            # Criar mapa de caminhos completos (basename -> full path)
+            selected_paths_map = {os.path.splitext(os.path.basename(p))[0].lower(): p for p in selected_file_paths}
+            logs.append(f"Arquivos selecionados: {len(selected_file_paths)}")
+
+            for i, a in enumerate(audios):
+                audio_basename = os.path.splitext(os.path.basename(a['name']))[0].lower()
+
+                # Verificar se este áudio tem correspondência nos arquivos selecionados
+                if audio_basename not in selected_paths_map:
+                    continue  # Pular este áudio, não foi selecionado
+
+                srt_path = selected_paths_map[audio_basename]
+
+                # Criar título
+                if create_title and os.path.exists(srt_path):
+                    mid, m = criar_material_texto(limpar_nome_musica(a['name']), 7.0)
+                    mats.append(m)
+                    sg, sp = criar_segmento_texto(mid, a['start'], a['duration'], -0.85)
+                    all_title_segs.append(sg); spds.append(sp)
+
+                # Legendas do SRT
+                if os.path.exists(srt_path):
+                    gid = f"imp_{int(datetime.now().timestamp()*1000)}_{i}"
+                    for leg in parse_srt(srt_path):
+                        if leg['start'] + leg['duration'] <= a['duration']:
+                            mid, m = criar_material_texto(leg['text'], 5.0, True, gid)
+                            mats.append(m)
+                            sg, sp = criar_segmento_texto(mid, a['start'] + leg['start'], leg['duration'], -0.75)
+                            all_subtitle_segs.append(sg); spds.append(sp); total += 1
+
+        # FORMATO ANTIGO: Para compatibilidade com chamadas antigas
+        elif srt_folder:
+            # Se selected_files foi fornecido, filtrar apenas os arquivos selecionados
+            if selected_files:
+                selected_basenames = {os.path.splitext(f)[0].lower(): f for f in selected_files}
+                logs.append(f"Arquivos selecionados: {len(selected_files)}")
+            else:
+                selected_basenames = None
+
+            for i, a in enumerate(audios):
+                audio_basename = os.path.splitext(a['name'])[0].lower()
+
+                if selected_basenames is not None:
+                    if audio_basename not in selected_basenames:
+                        continue
+                    srt_filename = selected_basenames[audio_basename]
+                    srt_path = os.path.join(srt_folder, srt_filename)
+                else:
+                    srt_path = os.path.join(srt_folder, os.path.splitext(a['name'])[0] + '.srt')
+
+                if create_title and os.path.exists(srt_path):
+                    mid, m = criar_material_texto(limpar_nome_musica(a['name']), 7.0)
+                    mats.append(m)
+                    sg, sp = criar_segmento_texto(mid, a['start'], a['duration'], -0.85)
+                    all_title_segs.append(sg); spds.append(sp)
+
+                if os.path.exists(srt_path):
+                    gid = f"imp_{int(datetime.now().timestamp()*1000)}_{i}"
+                    for leg in parse_srt(srt_path):
+                        if leg['start'] + leg['duration'] <= a['duration']:
+                            mid, m = criar_material_texto(leg['text'], 5.0, True, gid)
+                            mats.append(m)
+                            sg, sp = criar_segmento_texto(mid, a['start'] + leg['start'], leg['duration'], -0.75)
+                            all_subtitle_segs.append(sg); spds.append(sp); total += 1
+        else:
+            return {'error': 'Nenhuma pasta ou arquivo SRT especificado'}
+
+        # Criar tracks: uma para legendas, uma para títulos (se houver)
+        tracks = []
+        if all_subtitle_segs:
+            tracks.append({"attribute": 0, "flag": 0, "id": str(uuid.uuid4()).upper(), "is_default_name": True, "name": "", "segments": all_subtitle_segs, "type": "text"})
+        if all_title_segs:
+            tracks.append({"attribute": 0, "flag": 0, "id": str(uuid.uuid4()).upper(), "is_default_name": True, "name": "", "segments": all_title_segs, "type": "text"})
 
         projeto['materials'].setdefault('texts', []).extend(mats)
         projeto['materials'].setdefault('speeds', []).extend(spds)
@@ -381,6 +452,7 @@ def insert_srt(draft_path, srt_folder, create_title=True):
         with open(draft_path, 'w', encoding='utf-8') as f:
             json.dump(projeto, f, indent=2, ensure_ascii=False)
         logs.append(f"Legendas: {total}")
+        logs.append(f"Legendas inseridas! {len(all_subtitle_segs)} segmentos em {len(tracks)} track(s)")
         return {'success': True, 'logs': logs, 'stats': {'totalSubtitles': total, 'tracksCreated': len(tracks)}}
     except Exception as e:
         return {'error': str(e)}
@@ -397,7 +469,7 @@ if __name__ == '__main__':
         elif action == 'sync': r = sync_project(cmd['draftPath'], cmd.get('audioTrackIndex', 0), cmd.get('mode', 'audio'), cmd.get('syncSubtitles', True), cmd.get('applyAnimations', False))
         elif action == 'loop_video': r = loop_video(cmd['draftPath'], cmd.get('audioTrackIndex', 0), cmd.get('order', 'random'))
         elif action == 'loop_audio': r = loop_audio(cmd['draftPath'], cmd['trackIndex'], cmd['targetDuration'])
-        elif action == 'insert_srt': r = insert_srt(cmd['draftPath'], cmd['srtFolder'], cmd.get('createTitle', True))
+        elif action == 'insert_srt': r = insert_srt(cmd['draftPath'], cmd.get('srtFolders'), cmd.get('createTitle', True), cmd.get('selectedFilePaths'), cmd.get('srtFolder'), cmd.get('selectedFiles'))
         else: r = {'error': f'Ação: {action}?'}
         print(json.dumps(r, ensure_ascii=False))
     except Exception as e:

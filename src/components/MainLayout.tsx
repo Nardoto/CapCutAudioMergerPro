@@ -1,6 +1,6 @@
-import { useState, useEffect } from 'react'
+import { useState, useEffect, useRef } from 'react'
 import { motion, AnimatePresence } from 'framer-motion'
-import { Zap, RefreshCw, FileText, HelpCircle, LogOut, FolderOpen, ChevronRight, Minus, Square, X, Download, ExternalLink, User as UserIcon, Crown, Undo2 } from 'lucide-react'
+import { Zap, RefreshCw, FileText, HelpCircle, LogOut, FolderOpen, ChevronRight, Minus, Square, X, Download, ExternalLink, User as UserIcon, Crown, Undo2, Search, Clock, ChevronDown, Trash2, History } from 'lucide-react'
 import type { User, TrackInfo, LogEntry } from '../types'
 import TimelinePreview from './TimelinePreview'
 import SyncPanel from './panels/SyncPanel'
@@ -30,6 +30,12 @@ export default function MainLayout({ user, onLogout }: MainLayoutProps) {
   const [updateAvailable, setUpdateAvailable] = useState<{ version: string; downloadUrl: string } | null>(null)
   const [showHelp, setShowHelp] = useState(false)
   const [canUndo, setCanUndo] = useState(false)
+  const [showProjectPicker, setShowProjectPicker] = useState(false)
+  const [capCutProjects, setCapCutProjects] = useState<Array<{ name: string; path: string; draftPath: string; modifiedAt: string }>>([])
+  const [showBackupDropdown, setShowBackupDropdown] = useState(false)
+  const [backups, setBackups] = useState<Array<{ filename: string; displayDate: string; timestamp: number }>>([])
+  const [backupCount, setBackupCount] = useState(0)
+  const backupDropdownRef = useRef<HTMLDivElement>(null)
   const [logs, setLogs] = useState<LogEntry[]>([
     { id: '1', type: 'info', message: 'CapCut Sync Pro v2.0 iniciado', timestamp: new Date() }
   ])
@@ -67,22 +73,54 @@ export default function MainLayout({ user, onLogout }: MainLayoutProps) {
     checkUpdates()
   }, [])
 
-  // Check if can undo when draftPath changes
+  // Load backups when draftPath changes
   useEffect(() => {
-    async function checkUndoAvailable() {
+    async function loadBackups() {
       if (!ipcRenderer || !draftPath) {
         setCanUndo(false)
+        setBackups([])
+        setBackupCount(0)
         return
       }
       try {
-        const result = await ipcRenderer.invoke('check-backup', draftPath)
-        setCanUndo(result.hasBackup)
+        const result = await ipcRenderer.invoke('list-backups', draftPath)
+        setBackups(result.backups || [])
+        setBackupCount(result.count || 0)
+        setCanUndo(result.count > 0)
       } catch {
         setCanUndo(false)
+        setBackups([])
+        setBackupCount(0)
       }
     }
-    checkUndoAvailable()
+    loadBackups()
   }, [draftPath])
+
+  // Refresh backups list
+  const refreshBackups = async () => {
+    if (!ipcRenderer || !draftPath) return
+    try {
+      const result = await ipcRenderer.invoke('list-backups', draftPath)
+      setBackups(result.backups || [])
+      setBackupCount(result.count || 0)
+      setCanUndo(result.count > 0)
+    } catch {
+      setCanUndo(false)
+    }
+  }
+
+  // Close backup dropdown when clicking outside
+  useEffect(() => {
+    const handleClickOutside = (event: MouseEvent) => {
+      if (backupDropdownRef.current && !backupDropdownRef.current.contains(event.target as Node)) {
+        setShowBackupDropdown(false)
+      }
+    }
+    if (showBackupDropdown) {
+      document.addEventListener('mousedown', handleClickOutside)
+    }
+    return () => document.removeEventListener('mousedown', handleClickOutside)
+  }, [showBackupDropdown])
 
   const addLog = (type: LogEntry['type'], message: string) => {
     setLogCounter(c => c + 1)
@@ -139,27 +177,50 @@ export default function MainLayout({ user, onLogout }: MainLayoutProps) {
       if (result.error) { addLog('error', result.error); setIsLoading(false); return }
       setTracks(result.tracks)
       addLog('success', 'Projeto reanalisado: ' + result.tracks.length + ' tracks')
-      // Check if undo is available
-      const backupCheck = await ipcRenderer.invoke('check-backup', draftPath)
-      setCanUndo(backupCheck.hasBackup)
+      // Refresh backup list
+      await refreshBackups()
     } catch (error) { addLog('error', 'Erro: ' + error) }
     setIsLoading(false)
   }
 
-  const handleUndo = async () => {
+  const handleUndo = async (backupFilename?: string) => {
     if (!draftPath || !ipcRenderer || !canUndo) return
-    addLog('info', 'Desfazendo última modificação...')
+    addLog('info', backupFilename ? `Restaurando backup: ${backupFilename}` : 'Desfazendo última modificação...')
+    setShowBackupDropdown(false)
     try {
-      const result = await ipcRenderer.invoke('undo-changes', draftPath)
+      const result = await ipcRenderer.invoke('undo-changes', draftPath, backupFilename)
       if (result.error) {
         addLog('error', result.error)
       } else {
-        addLog('success', 'Modificação desfeita com sucesso!')
-        setCanUndo(false)
+        addLog('success', `Restaurado: ${result.restored}`)
+        await refreshBackups()
         handleReanalyze()
       }
     } catch (error) {
       addLog('error', 'Erro ao desfazer: ' + error)
+    }
+  }
+
+  const handleDeleteBackup = async (backupFilename: string) => {
+    if (!draftPath || !ipcRenderer) return
+    try {
+      await ipcRenderer.invoke('delete-backup', draftPath, backupFilename)
+      addLog('info', `Backup removido: ${backupFilename}`)
+      await refreshBackups()
+    } catch (error) {
+      addLog('error', 'Erro ao remover backup: ' + error)
+    }
+  }
+
+  const handleDeleteAllBackups = async () => {
+    if (!draftPath || !ipcRenderer) return
+    try {
+      const result = await ipcRenderer.invoke('delete-all-backups', draftPath)
+      addLog('success', `${result.deleted} backups removidos`)
+      setShowBackupDropdown(false)
+      await refreshBackups()
+    } catch (error) {
+      addLog('error', 'Erro ao remover backups: ' + error)
     }
   }
 
@@ -181,6 +242,74 @@ export default function MainLayout({ user, onLogout }: MainLayoutProps) {
   }
 
   const audioTracks = tracks.filter(t => t.type === 'audio')
+
+  // Detectar projetos do CapCut automaticamente
+  const handleDetectCapCut = async () => {
+    if (!ipcRenderer) { addLog('error', 'Electron IPC not available'); return }
+    addLog('info', 'Detectando projetos do CapCut...')
+
+    try {
+      const result = await ipcRenderer.invoke('detect-capcut-folder')
+      if (result.error) {
+        addLog('error', result.error)
+        return
+      }
+
+      if (result.projects.length === 0) {
+        addLog('warning', 'Nenhum projeto encontrado na pasta do CapCut')
+        return
+      }
+
+      setCapCutProjects(result.projects)
+      setShowProjectPicker(true)
+      addLog('success', `${result.count} projetos encontrados!`)
+    } catch (error) {
+      addLog('error', 'Erro ao detectar: ' + error)
+    }
+  }
+
+  // Selecionar projeto da lista
+  const handleSelectProject = async (project: { name: string; path: string; draftPath: string }) => {
+    setShowProjectPicker(false)
+    setProjectPath(project.path)
+    setProjectName(project.name)
+    setDraftPath(project.draftPath)
+    addLog('success', 'Projeto selecionado: ' + project.name)
+
+    // Analisar automaticamente
+    setIsLoading(true)
+    addLog('info', 'Analisando projeto automaticamente...')
+    try {
+      const analyzeResult = await ipcRenderer?.invoke('analyze-project', project.draftPath)
+      if (analyzeResult.error) {
+        addLog('error', analyzeResult.error)
+      } else {
+        setTracks(analyzeResult.tracks)
+        const firstAudioIndex = analyzeResult.tracks.findIndex((t: TrackInfo) => t.type === 'audio')
+        if (firstAudioIndex >= 0) setSelectedAudioTrack(firstAudioIndex)
+        addLog('success', 'Projeto analisado: ' + analyzeResult.tracks.length + ' tracks encontradas')
+      }
+    } catch (error) {
+      addLog('error', 'Erro: ' + error)
+    }
+    setIsLoading(false)
+  }
+
+  // Formatar data relativa
+  const formatRelativeDate = (dateStr: string) => {
+    const date = new Date(dateStr)
+    const now = new Date()
+    const diffMs = now.getTime() - date.getTime()
+    const diffMins = Math.floor(diffMs / 60000)
+    const diffHours = Math.floor(diffMs / 3600000)
+    const diffDays = Math.floor(diffMs / 86400000)
+
+    if (diffMins < 1) return 'agora'
+    if (diffMins < 60) return `${diffMins}min atrás`
+    if (diffHours < 24) return `${diffHours}h atrás`
+    if (diffDays < 7) return `${diffDays}d atrás`
+    return date.toLocaleDateString('pt-BR')
+  }
 
   return (
     <div className="h-screen w-screen bg-background-dark flex flex-col overflow-hidden">
@@ -304,12 +433,22 @@ export default function MainLayout({ user, onLogout }: MainLayoutProps) {
           <div className="p-2 border-b border-border-light flex-shrink-0">
             <div className="flex items-center gap-2">
               <button
+                onClick={handleDetectCapCut}
+                disabled={isLoading}
+                className="btn-primary py-1.5 px-3 flex items-center gap-1.5 text-xs"
+                title="Detectar projetos do CapCut automaticamente"
+              >
+                <Search className="w-3.5 h-3.5" />
+                {isLoading ? 'Analisando...' : 'Detectar CapCut'}
+              </button>
+              <button
                 onClick={handleSelectFolder}
                 disabled={isLoading}
                 className="btn-secondary py-1.5 px-3 flex items-center gap-1.5 text-xs"
+                title="Selecionar pasta manualmente"
               >
                 <FolderOpen className="w-3.5 h-3.5" />
-                {isLoading ? 'Analisando...' : 'Selecionar Projeto'}
+                Manual
               </button>
 
               {projectPath && (
@@ -320,16 +459,80 @@ export default function MainLayout({ user, onLogout }: MainLayoutProps) {
                 </div>
               )}
 
-              {/* Undo button */}
+              {/* Undo dropdown */}
               {canUndo && (
-                <button
-                  onClick={handleUndo}
-                  className="ml-auto btn-secondary py-1.5 px-3 flex items-center gap-1.5 text-xs text-yellow-400 border-yellow-400/50 hover:bg-yellow-400/10"
-                  title="Desfazer última modificação"
-                >
-                  <Undo2 className="w-3.5 h-3.5" />
-                  Desfazer
-                </button>
+                <div ref={backupDropdownRef} className="ml-auto relative">
+                  <button
+                    onClick={() => setShowBackupDropdown(!showBackupDropdown)}
+                    className="btn-secondary py-1.5 px-3 flex items-center gap-1.5 text-xs text-yellow-400 border-yellow-400/50 hover:bg-yellow-400/10"
+                    title="Ver histórico de backups"
+                  >
+                    <History className="w-3.5 h-3.5" />
+                    Desfazer ({backupCount})
+                    <ChevronDown className={`w-3 h-3 transition-transform ${showBackupDropdown ? 'rotate-180' : ''}`} />
+                  </button>
+
+                  {/* Dropdown */}
+                  <AnimatePresence>
+                    {showBackupDropdown && (
+                      <motion.div
+                        initial={{ opacity: 0, y: -5 }}
+                        animate={{ opacity: 1, y: 0 }}
+                        exit={{ opacity: 0, y: -5 }}
+                        className="absolute right-0 top-full mt-1 w-72 bg-background-dark border border-border-light rounded-lg shadow-xl z-50 overflow-hidden"
+                      >
+                        <div className="p-2 border-b border-border-light flex items-center justify-between">
+                          <span className="text-xs font-medium text-white">Histórico de Backups</span>
+                          <button
+                            onClick={handleDeleteAllBackups}
+                            className="text-[10px] text-red-400 hover:text-red-300 flex items-center gap-1"
+                            title="Limpar todos os backups"
+                          >
+                            <Trash2 className="w-3 h-3" />
+                            Limpar tudo
+                          </button>
+                        </div>
+                        <div className="max-h-60 overflow-y-auto">
+                          {backups.map((backup, idx) => (
+                            <div
+                              key={backup.filename}
+                              className="flex items-center justify-between p-2 hover:bg-white/5 border-b border-border-light last:border-b-0"
+                            >
+                              <button
+                                onClick={() => handleUndo(backup.filename)}
+                                className="flex-1 flex items-center gap-2 text-left"
+                              >
+                                <Undo2 className="w-3.5 h-3.5 text-yellow-400" />
+                                <div>
+                                  <div className="text-xs text-white">{backup.displayDate}</div>
+                                  <div className="text-[10px] text-text-muted">
+                                    {idx === 0 ? 'Mais recente' : `Backup ${backupCount - idx}`}
+                                  </div>
+                                </div>
+                              </button>
+                              <button
+                                onClick={(e) => { e.stopPropagation(); handleDeleteBackup(backup.filename); }}
+                                className="p-1 hover:bg-red-500/20 rounded text-red-400 hover:text-red-300"
+                                title="Remover este backup"
+                              >
+                                <X className="w-3 h-3" />
+                              </button>
+                            </div>
+                          ))}
+                        </div>
+                        <div className="p-2 border-t border-border-light">
+                          <button
+                            onClick={() => handleUndo()}
+                            className="w-full btn-primary py-1.5 text-xs flex items-center justify-center gap-1.5"
+                          >
+                            <Undo2 className="w-3.5 h-3.5" />
+                            Restaurar último backup
+                          </button>
+                        </div>
+                      </motion.div>
+                    )}
+                  </AnimatePresence>
+                </div>
               )}
             </div>
           </div>
@@ -339,13 +542,15 @@ export default function MainLayout({ user, onLogout }: MainLayoutProps) {
             {/* Timeline & Panel */}
             <div className="flex-1 flex flex-col overflow-hidden p-2 gap-2 min-h-0">
               {/* Timeline Preview */}
-              <div className="card p-2 flex-shrink-0">
-                <h3 className="text-[10px] font-semibold text-text-secondary mb-1">PREVIEW DA TIMELINE (clique para selecionar referência)</h3>
-                <TimelinePreview
-                  tracks={tracks}
-                  selectedAudioTrack={selectedAudioTrack}
-                  onTrackClick={handleTrackClick}
-                />
+              <div className="card p-2 flex-shrink min-h-[100px] max-h-[35vh] overflow-hidden flex flex-col">
+                <h3 className="text-[10px] font-semibold text-text-secondary mb-1 flex-shrink-0">PREVIEW DA TIMELINE (clique para selecionar referência)</h3>
+                <div className="overflow-y-auto flex-1 pr-1">
+                  <TimelinePreview
+                    tracks={tracks}
+                    selectedAudioTrack={selectedAudioTrack}
+                    onTrackClick={handleTrackClick}
+                  />
+                </div>
               </div>
 
               {/* Panel content */}
@@ -420,6 +625,92 @@ export default function MainLayout({ user, onLogout }: MainLayoutProps) {
 
       {/* Help Modal */}
       <HelpModal isOpen={showHelp} onClose={() => setShowHelp(false)} />
+
+      {/* Project Picker Modal */}
+      <AnimatePresence>
+        {showProjectPicker && (
+          <>
+            {/* Backdrop */}
+            <motion.div
+              initial={{ opacity: 0 }}
+              animate={{ opacity: 1 }}
+              exit={{ opacity: 0 }}
+              className="fixed inset-0 bg-black/70 z-50"
+              onClick={() => setShowProjectPicker(false)}
+            />
+
+            {/* Modal */}
+            <motion.div
+              initial={{ opacity: 0, scale: 0.95 }}
+              animate={{ opacity: 1, scale: 1 }}
+              exit={{ opacity: 0, scale: 0.95 }}
+              className="fixed inset-x-4 top-20 bottom-20 md:inset-x-20 bg-background-dark border border-border-light rounded-xl z-50 flex flex-col overflow-hidden"
+            >
+              {/* Header */}
+              <div className="flex items-center justify-between p-4 border-b border-border-light">
+                <div>
+                  <h2 className="text-lg font-bold text-white">Projetos do CapCut</h2>
+                  <p className="text-xs text-text-muted">{capCutProjects.length} projetos encontrados (ordenados por modificação)</p>
+                </div>
+                <button
+                  onClick={() => setShowProjectPicker(false)}
+                  className="p-2 hover:bg-white/10 rounded-lg transition-colors"
+                >
+                  <X className="w-5 h-5 text-text-secondary" />
+                </button>
+              </div>
+
+              {/* Projects List */}
+              <div className="flex-1 overflow-auto p-2">
+                <div className="grid gap-2">
+                  {capCutProjects.map((project, idx) => (
+                    <button
+                      key={project.path}
+                      onClick={() => handleSelectProject(project)}
+                      className="w-full p-3 bg-white/5 hover:bg-white/10 border border-border-light hover:border-primary/50 rounded-lg transition-all text-left group"
+                    >
+                      <div className="flex items-center justify-between">
+                        <div className="flex items-center gap-3">
+                          <div className="w-8 h-8 rounded-lg bg-primary/20 flex items-center justify-center">
+                            <FolderOpen className="w-4 h-4 text-primary" />
+                          </div>
+                          <div>
+                            <span className="text-white font-medium group-hover:text-primary transition-colors">
+                              {project.name}
+                            </span>
+                            <div className="flex items-center gap-2 text-[10px] text-text-muted">
+                              <Clock className="w-3 h-3" />
+                              <span>{formatRelativeDate(project.modifiedAt)}</span>
+                            </div>
+                          </div>
+                        </div>
+                        {idx === 0 && (
+                          <span className="text-[9px] bg-green-500/20 text-green-400 px-2 py-0.5 rounded-full">
+                            Mais recente
+                          </span>
+                        )}
+                      </div>
+                    </button>
+                  ))}
+                </div>
+              </div>
+
+              {/* Footer */}
+              <div className="p-3 border-t border-border-light flex justify-between items-center">
+                <span className="text-xs text-text-muted">
+                  Clique em um projeto para selecioná-lo
+                </span>
+                <button
+                  onClick={() => setShowProjectPicker(false)}
+                  className="btn-secondary py-1.5 px-4 text-xs"
+                >
+                  Cancelar
+                </button>
+              </div>
+            </motion.div>
+          </>
+        )}
+      </AnimatePresence>
     </div>
   )
 }
