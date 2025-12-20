@@ -20,7 +20,7 @@ export default function NoAccess({ user, reason, onLogout }: NoAccessProps) {
   }
 
   const handleBuyAccess = () => {
-    ipcRenderer?.invoke('open-external', 'https://nardoto.com/capcut-sync-pro')
+    ipcRenderer?.invoke('open-external', 'https://nardoto.com.br/capcut-sync-pro')
   }
 
   return (
@@ -138,7 +138,7 @@ export default function NoAccess({ user, reason, onLogout }: NoAccessProps) {
         <p className="text-text-muted text-[10px] mt-8">
           Desenvolvido por{' '}
           <button
-            onClick={() => ipcRenderer?.invoke('open-external', 'https://nardoto.com')}
+            onClick={() => ipcRenderer?.invoke('open-external', 'https://nardoto.com.br')}
             className="text-primary hover:underline"
           >
             Nardoto

@@ -715,22 +715,13 @@ export default function SrtPanel({ onLog, draftPath, onReanalyze }: SrtPanelProp
                     )}
                   </span>
                 </div>
-                <div className="flex gap-2">
-                  <button
-                    onClick={() => setShowPreview(false)}
-                    className="btn-secondary py-1.5 px-3 text-xs"
-                  >
-                    Fechar
-                  </button>
-                  <button
-                    onClick={handleInsertSubtitles}
-                    disabled={selectedCount === 0}
-                    className="py-1.5 px-4 text-xs text-white font-semibold rounded-lg transition-all disabled:opacity-50 disabled:cursor-not-allowed hover:brightness-110"
-                    style={{ backgroundColor: '#9c4937' }}
-                  >
-                    Inserir {selectedCount}
-                  </button>
-                </div>
+                <button
+                  onClick={() => setShowPreview(false)}
+                  className="py-1.5 px-4 text-xs text-white font-semibold rounded-lg transition-all hover:brightness-110"
+                  style={{ backgroundColor: '#9c4937' }}
+                >
+                  OK
+                </button>
               </div>
             </motion.div>
           </>
@@ -968,22 +959,13 @@ export default function SrtPanel({ onLog, draftPath, onReanalyze }: SrtPanelProp
                         )}
                       </span>
                     </div>
-                    <div className="flex gap-2">
-                      <button
-                        onClick={() => setShowBatchPreview(false)}
-                        className="btn-secondary py-1.5 px-3 text-xs"
-                      >
-                        Fechar
-                      </button>
-                      <button
-                        onClick={handleInsertBatch}
-                        disabled={batchSelectedCount === 0}
-                        className="py-1.5 px-4 text-xs text-white font-semibold rounded-lg transition-all disabled:opacity-50 disabled:cursor-not-allowed hover:brightness-110"
-                        style={{ backgroundColor: '#9c4937' }}
-                      >
-                        Inserir {batchSelectedCount}
-                      </button>
-                    </div>
+                    <button
+                      onClick={() => setShowBatchPreview(false)}
+                      className="py-1.5 px-4 text-xs text-white font-semibold rounded-lg transition-all hover:brightness-110"
+                      style={{ backgroundColor: '#9c4937' }}
+                    >
+                      OK
+                    </button>
                   </div>
                 </motion.div>
               </>

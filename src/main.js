@@ -356,6 +356,7 @@ ipcMain.handle('window-minimize', () => mainWindow?.minimize());
 ipcMain.handle('window-maximize', () => { if (mainWindow?.isMaximized()) mainWindow.unmaximize(); else mainWindow?.maximize(); });
 ipcMain.handle('window-close', () => mainWindow?.close());
 ipcMain.handle('open-external', async (_, url) => await shell.openExternal(url));
+ipcMain.handle('open-folder-in-explorer', async (_, folderPath) => await shell.openPath(folderPath));
 
 // ============ AUTO-UPDATE HANDLERS ============
 ipcMain.handle('check-for-updates', async () => {

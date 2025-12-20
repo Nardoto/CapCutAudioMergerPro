@@ -408,7 +408,7 @@ export default function MainLayout({ user, onLogout }: MainLayoutProps) {
 
           {/* Credits */}
           <button
-            onClick={() => ipcRenderer?.invoke('open-external', 'https://nardoto.com')}
+            onClick={() => ipcRenderer?.invoke('open-external', 'https://nardoto.com.br')}
             className="w-12 h-10 rounded-lg flex flex-col items-center justify-center hover:bg-white/5 transition-colors"
             title="Desenvolvido por Nardoto"
           >
@@ -452,11 +452,33 @@ export default function MainLayout({ user, onLogout }: MainLayoutProps) {
               </button>
 
               {projectPath && (
-                <div className="flex items-center gap-1 text-xs">
-                  <ChevronRight className="w-3.5 h-3.5 text-text-muted" />
-                  <span className="text-white font-medium truncate max-w-[200px]">{projectName}</span>
-                  <span className="text-text-muted">({tracks.length} tracks)</span>
-                </div>
+                <>
+                  <div className="flex items-center gap-1 text-xs">
+                    <ChevronRight className="w-3.5 h-3.5 text-text-muted" />
+                    <span className="text-white font-medium truncate max-w-[200px]">{projectName}</span>
+                    <span className="text-text-muted">({tracks.length} tracks)</span>
+                  </div>
+                  <button
+                    onClick={() => ipcRenderer?.invoke('open-folder-in-explorer', projectPath)}
+                    className="btn-secondary py-1.5 px-2 text-xs"
+                    title="Abrir pasta do projeto no Explorer"
+                  >
+                    <ExternalLink className="w-3.5 h-3.5" />
+                  </button>
+                  <button
+                    onClick={handleReanalyze}
+                    disabled={isLoading}
+                    className="btn-secondary py-1.5 px-3 flex items-center gap-1.5 text-xs"
+                    title="Analisar projeto novamente"
+                  >
+                    {isLoading ? (
+                      <span className="w-3.5 h-3.5 border-2 border-white/30 border-t-white rounded-full animate-spin" />
+                    ) : (
+                      <Search className="w-3.5 h-3.5" />
+                    )}
+                    Analisar
+                  </button>
+                </>
               )}
 
               {/* Undo dropdown */}
@@ -619,7 +641,7 @@ export default function MainLayout({ user, onLogout }: MainLayoutProps) {
       {/* Footer */}
       <div className="h-5 bg-background-dark-alt border-t border-border-light flex items-center justify-center px-3 flex-shrink-0">
         <span className="text-[9px] text-text-muted">
-          Desenvolvido por <button onClick={() => ipcRenderer?.invoke('open-external', 'https://nardoto.com')} className="text-primary hover:underline">Nardoto</button>
+          Desenvolvido por <button onClick={() => ipcRenderer?.invoke('open-external', 'https://nardoto.com.br')} className="text-primary hover:underline">Nardoto</button>
         </span>
       </div>
 
@@ -664,33 +686,50 @@ export default function MainLayout({ user, onLogout }: MainLayoutProps) {
               <div className="flex-1 overflow-auto p-2">
                 <div className="grid gap-2">
                   {capCutProjects.map((project, idx) => (
-                    <button
+                    <div
                       key={project.path}
-                      onClick={() => handleSelectProject(project)}
-                      className="w-full p-3 bg-white/5 hover:bg-white/10 border border-border-light hover:border-primary/50 rounded-lg transition-all text-left group"
+                      className="w-full p-3 bg-white/5 hover:bg-white/10 border border-border-light hover:border-primary/50 rounded-lg transition-all group"
                     >
                       <div className="flex items-center justify-between">
-                        <div className="flex items-center gap-3">
-                          <div className="w-8 h-8 rounded-lg bg-primary/20 flex items-center justify-center">
+                        <button
+                          onClick={() => handleSelectProject(project)}
+                          className="flex-1 flex items-center gap-3 text-left"
+                        >
+                          <div className="w-8 h-8 rounded-lg bg-primary/20 flex items-center justify-center flex-shrink-0">
                             <FolderOpen className="w-4 h-4 text-primary" />
                           </div>
-                          <div>
-                            <span className="text-white font-medium group-hover:text-primary transition-colors">
+                          <div className="min-w-0 flex-1">
+                            <span className="text-white font-medium group-hover:text-primary transition-colors block truncate">
                               {project.name}
                             </span>
                             <div className="flex items-center gap-2 text-[10px] text-text-muted">
-                              <Clock className="w-3 h-3" />
+                              <Clock className="w-3 h-3 flex-shrink-0" />
                               <span>{formatRelativeDate(project.modifiedAt)}</span>
                             </div>
+                            <div className="text-[9px] text-text-muted truncate mt-0.5" title={project.path}>
+                              {project.path}
+                            </div>
                           </div>
+                        </button>
+                        <div className="flex items-center gap-2 ml-2 flex-shrink-0">
+                          {idx === 0 && (
+                            <span className="text-[9px] bg-green-500/20 text-green-400 px-2 py-0.5 rounded-full">
+                              Recente
+                            </span>
+                          )}
+                          <button
+                            onClick={(e) => {
+                              e.stopPropagation()
+                              ipcRenderer?.invoke('open-folder-in-explorer', project.path)
+                            }}
+                            className="p-1.5 hover:bg-white/10 rounded-lg transition-colors"
+                            title="Abrir pasta no Explorer"
+                          >
+                            <ExternalLink className="w-3.5 h-3.5 text-text-muted hover:text-primary" />
+                          </button>
                         </div>
-                        {idx === 0 && (
-                          <span className="text-[9px] bg-green-500/20 text-green-400 px-2 py-0.5 rounded-full">
-                            Mais recente
-                          </span>
-                        )}
                       </div>
-                    </button>
+                    </div>
                   ))}
                 </div>
               </div>

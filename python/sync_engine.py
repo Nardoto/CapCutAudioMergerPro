@@ -141,16 +141,186 @@ def limpar_nome_musica(nome):
 
 def criar_material_texto(texto, font_size=5.0, is_subtitle=False, group_id=""):
     mat_id = str(uuid.uuid4()).upper()
-    return mat_id, {"add_type": 2, "alignment": 1, "background_alpha": 1.0, "check_flag": 7,
-        "content": json.dumps({"text": texto, "styles": [{"fill": {"content": {"render_type": "solid", "solid": {"color": [1,1,1]}}}, "font": {"path": "", "id": ""}, "size": font_size, "range": [0, len(texto)]}]}, ensure_ascii=False),
-        "font_size": font_size, "global_alpha": 1.0, "group_id": group_id, "id": mat_id, "line_max_width": 0.82,
-        "text_alpha": 1.0, "text_color": "#FFFFFF", "type": "subtitle" if is_subtitle else "text", "words": {"end_time": [], "start_time": [], "text": []}}
+    # Estrutura completa de material que o CapCut espera (baseado em importação manual)
+    content = json.dumps({
+        "text": texto,
+        "styles": [{
+            "fill": {"alpha": 1.0, "content": {"render_type": "solid", "solid": {"alpha": 1.0, "color": [1.0, 1.0, 1.0]}}},
+            "font": {"id": "", "path": ""},
+            "range": [0, len(texto)],
+            "size": font_size
+        }]
+    }, ensure_ascii=False)
 
-def criar_segmento_texto(mat_id, start, duration, y_pos=-0.8):
-    seg_id, spd_id = str(uuid.uuid4()).upper(), str(uuid.uuid4()).upper()
-    return {"clip": {"alpha": 1.0, "flip": {"horizontal": False, "vertical": False}, "rotation": 0.0, "scale": {"x": 1.0, "y": 1.0}, "transform": {"x": 0.0, "y": y_pos}},
-        "common_keyframes": [], "extra_material_refs": [spd_id], "id": seg_id, "material_id": mat_id, "target_timerange": {"duration": duration, "start": start}, "visible": True}, \
-        {"id": spd_id, "mode": 0, "speed": 1.0, "type": "speed"}
+    return mat_id, {
+        "add_type": 2,
+        "alignment": 1,
+        "background_alpha": 1.0,
+        "background_color": "",
+        "background_fill": "",
+        "background_height": 0.14,
+        "background_horizontal_offset": 0.0,
+        "background_round_radius": 0.0,
+        "background_style": 0,
+        "background_vertical_offset": 0.0,
+        "background_width": 0.14,
+        "base_content": "",
+        "bold_width": 0.0,
+        "border_alpha": 1.0,
+        "border_color": "",
+        "border_width": 0.08,
+        "caption_template_info": {"category_id": "", "category_name": "", "effect_id": "", "is_new": False, "path": "", "request_id": "", "resource_id": "", "resource_name": "", "source_platform": 0, "third_resource_id": ""},
+        "check_flag": 7,
+        "combo_info": {"text_templates": []},
+        "content": content,
+        "current_words": {"end_time": [], "start_time": [], "text": []},
+        "cutoff_postfix": "",
+        "enable_path_typesetting": False,
+        "fixed_height": -1.0,
+        "fixed_width": -1.0,
+        "font_category_id": "",
+        "font_category_name": "",
+        "font_id": "",
+        "font_name": "",
+        "font_path": "",
+        "font_resource_id": "",
+        "font_size": font_size,
+        "font_source_platform": 0,
+        "font_team_id": "",
+        "font_third_resource_id": "",
+        "font_title": "none",
+        "font_url": "",
+        "fonts": [],
+        "force_apply_line_max_width": False,
+        "global_alpha": 1.0,
+        "group_id": group_id,
+        "has_shadow": False,
+        "id": mat_id,
+        "initial_scale": 1.0,  # CRÍTICO: deve ser 1.0, não 0.0
+        "inner_padding": -1.0,
+        "is_batch_replace": False,
+        "is_lyric_effect": False,
+        "is_rich_text": False,
+        "is_words_linear": False,
+        "italic_degree": 0,
+        "ktv_color": "",
+        "language": "",
+        "layer_weight": 1,  # CRÍTICO: deve ser 1, não 0
+        "letter_spacing": 0.0,
+        "line_feed": 1,
+        "line_max_width": 0.82,
+        "line_spacing": 0.02,
+        "lyric_group_id": "",
+        "lyrics_template": {"category_id": "", "category_name": "", "effect_id": "", "panel": "", "path": "", "request_id": "", "resource_id": "", "resource_name": ""},
+        "multi_language_current": "none",
+        "name": "",
+        "offset_on_path": 0.0,
+        "oneline_cutoff": False,
+        "operation_type": 0,
+        "original_size": [],
+        "preset_category": "",
+        "preset_category_id": "",
+        "preset_has_set_alignment": False,
+        "preset_id": "",
+        "preset_index": 0,
+        "preset_name": "",
+        "punc_model": "",
+        "recognize_model": "",
+        "recognize_task_id": "",
+        "recognize_text": "",
+        "recognize_type": 0,
+        "relevance_segment": [],
+        "shadow_alpha": 0.9,
+        "shadow_angle": -45.0,
+        "shadow_color": "",
+        "shadow_distance": 5.0,
+        "shadow_point": {"x": 0.6363961030678928, "y": -0.6363961030678928},
+        "shadow_smoothing": 0.45,
+        "shape_clip_x": False,
+        "shape_clip_y": False,
+        "source_from": "",
+        "ssml_content": "",
+        "style_name": "",
+        "sub_template_id": -1,
+        "sub_type": 0,
+        "subtitle_keywords": None,
+        "subtitle_keywords_config": None,
+        "subtitle_template_original_fontsize": 0.0,
+        "text_alpha": 1.0,
+        "text_color": "#FFFFFF",
+        "text_curve": None,
+        "text_exceeds_path_process_type": 0,
+        "text_loop_on_path": False,
+        "text_preset_resource_id": "",
+        "text_size": 30,
+        "text_to_audio_ids": [],
+        "text_typesetting_path_index": 0,
+        "text_typesetting_paths": None,
+        "text_typesetting_paths_file": "",
+        "translate_original_text": "",
+        "tts_auto_update": False,
+        "type": "subtitle" if is_subtitle else "text",
+        "typesetting": 0,
+        "underline": False,
+        "underline_offset": 0.22,
+        "underline_width": 0.05,
+        "use_effect_default_color": True,
+        "words": {"end_time": [], "start_time": [], "text": []}
+    }
+
+def criar_segmento_texto(mat_id, start, duration, y_pos=-0.8, render_index=14000, track_render_index=0):
+    seg_id, anim_id = str(uuid.uuid4()).upper(), str(uuid.uuid4()).upper()
+    # Estrutura completa de segmento que o CapCut espera (baseado em importação manual)
+    # IMPORTANTE: extra_material_refs deve apontar para material_animation, não speed
+    return {
+        "caption_info": None,
+        "cartoon": False,
+        "clip": {"alpha": 1.0, "flip": {"horizontal": False, "vertical": False}, "rotation": 0.0, "scale": {"x": 1.0, "y": 1.0}, "transform": {"x": 0.0, "y": y_pos}},
+        "color_correct_alg_result": "",
+        "common_keyframes": [],
+        "desc": "",
+        "digital_human_template_group_id": "",
+        "enable_adjust": False,
+        "enable_adjust_mask": False,
+        "enable_color_correct_adjust": False,
+        "enable_color_curves": True,
+        "enable_color_match_adjust": False,
+        "enable_color_wheels": True,
+        "enable_hsl": False,
+        "enable_hsl_curves": True,
+        "enable_lut": False,
+        "enable_smart_color_adjust": False,
+        "enable_video_mask": True,
+        "extra_material_refs": [anim_id],
+        "group_id": "",
+        "hdr_settings": None,
+        "id": seg_id,
+        "intensifies_audio": False,
+        "is_loop": False,
+        "is_placeholder": False,
+        "is_tone_modify": False,
+        "keyframe_refs": [],
+        "last_nonzero_volume": 1.0,
+        "lyric_keyframes": None,
+        "material_id": mat_id,
+        "raw_segment_id": "",
+        "render_index": render_index,
+        "render_timerange": {"duration": 0, "start": 0},
+        "responsive_layout": {"enable": False, "horizontal_pos_layout": 0, "size_layout": 0, "target_follow": "", "vertical_pos_layout": 0},
+        "reverse": False,
+        "source": "segmentsourcenormal",
+        "source_timerange": None,
+        "speed": 1.0,
+        "state": 0,
+        "target_timerange": {"duration": duration, "start": start},
+        "template_id": "",
+        "template_scene": "default",
+        "track_attribute": 0,
+        "track_render_index": track_render_index,
+        "uniform_scale": {"on": True, "value": 1.0},
+        "visible": True,
+        "volume": 1.0
+    }, {"animations": [], "id": anim_id, "multi_language_current": "none", "type": "sticker_animation"}
 
 # ============ FUNÇÕES PRINCIPAIS ============
 
@@ -439,14 +609,15 @@ def insert_srt(draft_path, srt_folders=None, create_title=True, selected_file_pa
             return {'error': 'Nenhuma pasta ou arquivo SRT especificado'}
 
         # Criar tracks: uma para legendas, uma para títulos (se houver)
+        # IMPORTANTE: CapCut só reconhece tipos "video", "audio", "text" - NÃO usar "subtitle"
         tracks = []
         if all_subtitle_segs:
-            tracks.append({"attribute": 0, "flag": 0, "id": str(uuid.uuid4()).upper(), "is_default_name": True, "name": "", "segments": all_subtitle_segs, "type": "text"})
+            tracks.append({"attribute": 0, "flag": 1, "id": str(uuid.uuid4()).upper(), "is_default_name": True, "name": "", "segments": all_subtitle_segs, "type": "text"})
         if all_title_segs:
-            tracks.append({"attribute": 0, "flag": 0, "id": str(uuid.uuid4()).upper(), "is_default_name": True, "name": "", "segments": all_title_segs, "type": "text"})
+            tracks.append({"attribute": 0, "flag": 1, "id": str(uuid.uuid4()).upper(), "is_default_name": True, "name": "", "segments": all_title_segs, "type": "text"})
 
         projeto['materials'].setdefault('texts', []).extend(mats)
-        projeto['materials'].setdefault('speeds', []).extend(spds)
+        projeto['materials'].setdefault('material_animations', []).extend(spds)
         projeto['tracks'].extend(tracks)
 
         with open(draft_path, 'w', encoding='utf-8') as f:
@@ -525,22 +696,38 @@ def insert_srt_batch(draft_path, srt_files, create_title=True, gap_ms=2000000):
         if not all_subtitle_segs:
             return {'error': 'Nenhuma legenda encontrada nos arquivos selecionados'}
 
-        # Criar tracks
-        tracks = []
-        if all_subtitle_segs:
-            tracks.append({
+        # IMPORTANTE: CapCut precisa de uma track de vídeo para renderizar legendas na timeline
+        # Verificar se já existe uma track de vídeo, se não, criar uma vazia
+        has_video_track = any(t.get('type') == 'video' for t in projeto.get('tracks', []))
+        if not has_video_track:
+            projeto['tracks'].insert(0, {
                 "attribute": 0,
                 "flag": 0,
                 "id": str(uuid.uuid4()).upper(),
                 "is_default_name": True,
                 "name": "",
+                "segments": [],
+                "type": "video"
+            })
+            logs.append("[+] Track de vídeo criada (necessária para renderização)")
+
+        # Criar tracks de texto
+        # IMPORTANTE: CapCut só reconhece tipos "video", "audio", "text" - NÃO usar "subtitle"
+        tracks = []
+        if all_subtitle_segs:
+            tracks.append({
+                "attribute": 0,
+                "flag": 1,
+                "id": str(uuid.uuid4()).upper(),
+                "is_default_name": True,
+                "name": "",
                 "segments": all_subtitle_segs,
-                "type": "subtitle"
+                "type": "text"
             })
         if all_title_segs:
             tracks.append({
                 "attribute": 0,
-                "flag": 0,
+                "flag": 1,
                 "id": str(uuid.uuid4()).upper(),
                 "is_default_name": True,
                 "name": "",
@@ -550,14 +737,19 @@ def insert_srt_batch(draft_path, srt_files, create_title=True, gap_ms=2000000):
 
         # Adicionar materiais e tracks ao projeto
         projeto['materials'].setdefault('texts', []).extend(mats)
-        projeto['materials'].setdefault('speeds', []).extend(spds)
+        projeto['materials'].setdefault('material_animations', []).extend(spds)
         projeto['tracks'].extend(tracks)
-
-        with open(draft_path, 'w', encoding='utf-8') as f:
-            json.dump(projeto, f, indent=2, ensure_ascii=False)
 
         # Duração total (sem o último gap)
         total_duration = current_time - gap_ms if current_time > gap_ms else current_time
+
+        # IMPORTANTE: Definir a duration do projeto para o CapCut renderizar corretamente
+        if total_duration > projeto.get('duration', 0):
+            projeto['duration'] = total_duration
+            logs.append(f"[+] Duration do projeto: {total_duration/1000000:.2f}s")
+
+        with open(draft_path, 'w', encoding='utf-8') as f:
+            json.dump(projeto, f, indent=2, ensure_ascii=False)
 
         logs.append(f"Total: {total} legendas em {len(srt_files)} arquivos")
         return {
