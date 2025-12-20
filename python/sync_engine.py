@@ -457,6 +457,122 @@ def insert_srt(draft_path, srt_folders=None, create_title=True, selected_file_pa
     except Exception as e:
         return {'error': str(e)}
 
+def insert_srt_batch(draft_path, srt_files, create_title=True, gap_ms=2000000):
+    """
+    Insere múltiplos arquivos SRT sequencialmente na timeline (modo em massa).
+    Cada arquivo SRT é inserido um após o outro, com um espaço (gap) configurável entre eles.
+    Não depende de áudio - apenas insere as legendas em sequência.
+
+    Args:
+        draft_path: Caminho do draft_content.json
+        srt_files: Lista de caminhos completos dos arquivos .srt
+        create_title: Se True, cria texto de título para cada arquivo
+        gap_ms: Espaço em microsegundos entre cada bloco de SRT (padrão: 2 segundos)
+    """
+    try:
+        logs = []
+        backup_path = create_backup(draft_path)
+        logs.append(f"[BACKUP] {os.path.basename(backup_path)}")
+        with open(draft_path, 'r', encoding='utf-8') as f:
+            projeto = json.load(f)
+
+        total = 0
+        mats, spds = [], []
+        all_subtitle_segs = []
+        all_title_segs = []
+
+        current_time = 0  # Posição atual na timeline (em microssegundos)
+
+        for i, srt_path in enumerate(srt_files):
+            if not os.path.exists(srt_path):
+                logs.append(f"[SKIP] Arquivo não encontrado: {os.path.basename(srt_path)}")
+                continue
+
+            # Parse SRT file
+            legendas = parse_srt(srt_path)
+            if not legendas:
+                logs.append(f"[SKIP] Sem legendas: {os.path.basename(srt_path)}")
+                continue
+
+            # Calcular duração total deste bloco de SRT
+            block_duration = max(leg['start'] + leg['duration'] for leg in legendas)
+            block_name = os.path.splitext(os.path.basename(srt_path))[0]
+
+            # Criar título (se habilitado)
+            if create_title:
+                mid, m = criar_material_texto(limpar_nome_musica(block_name), 7.0)
+                mats.append(m)
+                sg, sp = criar_segmento_texto(mid, current_time, block_duration, -0.85)
+                all_title_segs.append(sg)
+                spds.append(sp)
+
+            # Inserir legendas deste arquivo
+            gid = f"batch_{int(datetime.now().timestamp()*1000)}_{i}"
+            for leg in legendas:
+                mid, m = criar_material_texto(leg['text'], 5.0, True, gid)
+                mats.append(m)
+                # Offset pelo tempo atual da timeline
+                sg, sp = criar_segmento_texto(mid, current_time + leg['start'], leg['duration'], -0.75)
+                all_subtitle_segs.append(sg)
+                spds.append(sp)
+                total += 1
+
+            logs.append(f"[+] {block_name}: {len(legendas)} legendas")
+
+            # Avançar para a próxima posição (duração do bloco + gap)
+            current_time += block_duration + gap_ms
+
+        if not all_subtitle_segs:
+            return {'error': 'Nenhuma legenda encontrada nos arquivos selecionados'}
+
+        # Criar tracks
+        tracks = []
+        if all_subtitle_segs:
+            tracks.append({
+                "attribute": 0,
+                "flag": 0,
+                "id": str(uuid.uuid4()).upper(),
+                "is_default_name": True,
+                "name": "",
+                "segments": all_subtitle_segs,
+                "type": "subtitle"
+            })
+        if all_title_segs:
+            tracks.append({
+                "attribute": 0,
+                "flag": 0,
+                "id": str(uuid.uuid4()).upper(),
+                "is_default_name": True,
+                "name": "",
+                "segments": all_title_segs,
+                "type": "text"
+            })
+
+        # Adicionar materiais e tracks ao projeto
+        projeto['materials'].setdefault('texts', []).extend(mats)
+        projeto['materials'].setdefault('speeds', []).extend(spds)
+        projeto['tracks'].extend(tracks)
+
+        with open(draft_path, 'w', encoding='utf-8') as f:
+            json.dump(projeto, f, indent=2, ensure_ascii=False)
+
+        # Duração total (sem o último gap)
+        total_duration = current_time - gap_ms if current_time > gap_ms else current_time
+
+        logs.append(f"Total: {total} legendas em {len(srt_files)} arquivos")
+        return {
+            'success': True,
+            'logs': logs,
+            'stats': {
+                'totalSubtitles': total,
+                'totalFiles': len(srt_files),
+                'tracksCreated': len(tracks),
+                'totalDuration': total_duration
+            }
+        }
+    except Exception as e:
+        return {'error': str(e)}
+
 # ============ MAIN ============
 if __name__ == '__main__':
     if len(sys.argv) < 2:
@@ -470,6 +586,7 @@ if __name__ == '__main__':
         elif action == 'loop_video': r = loop_video(cmd['draftPath'], cmd.get('audioTrackIndex', 0), cmd.get('order', 'random'))
         elif action == 'loop_audio': r = loop_audio(cmd['draftPath'], cmd['trackIndex'], cmd['targetDuration'])
         elif action == 'insert_srt': r = insert_srt(cmd['draftPath'], cmd.get('srtFolders'), cmd.get('createTitle', True), cmd.get('selectedFilePaths'), cmd.get('srtFolder'), cmd.get('selectedFiles'))
+        elif action == 'insert_srt_batch': r = insert_srt_batch(cmd['draftPath'], cmd.get('srtFiles', []), cmd.get('createTitle', True), cmd.get('gapMs', 2000000))
         else: r = {'error': f'Ação: {action}?'}
         print(json.dumps(r, ensure_ascii=False))
     except Exception as e:

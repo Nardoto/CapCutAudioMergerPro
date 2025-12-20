@@ -1,6 +1,6 @@
 import { useState } from 'react'
 import { motion, AnimatePresence } from 'framer-motion'
-import { FileText, FolderOpen, Upload, BookOpen, Check, X, AlertTriangle, Music, Eye, RefreshCw, Plus } from 'lucide-react'
+import { FileText, FolderOpen, Upload, BookOpen, Check, X, AlertTriangle, Music, Eye, RefreshCw, Plus, Layers } from 'lucide-react'
 import type { LogEntry } from '../../types'
 
 const { ipcRenderer } = window.require ? window.require('electron') : { ipcRenderer: null }
@@ -13,6 +13,7 @@ interface SrtMatch {
   subtitleCount: number
   matched: boolean
   selected?: boolean
+  durationMs?: number  // For batch mode
 }
 
 interface SrtPanelProps {
@@ -31,6 +32,12 @@ export default function SrtPanel({ onLog, draftPath, onReanalyze }: SrtPanelProp
   const [matches, setMatches] = useState<SrtMatch[]>([])
   const [unmatched, setUnmatched] = useState<SrtMatch[]>([])
   const [scanStats, setScanStats] = useState<{ totalSrt: number; totalAudios: number; matchedCount: number } | null>(null)
+
+  // Batch mode - insert SRTs sequentially without audio reference
+  const [batchMode, setBatchMode] = useState(false)
+  const [batchFiles, setBatchFiles] = useState<SrtMatch[]>([])
+  const [showBatchPreview, setShowBatchPreview] = useState(false)
+  const [gapSeconds, setGapSeconds] = useState(2)  // Gap between each SRT in seconds
 
   const handleSelectFolder = async () => {
     if (!ipcRenderer) {
@@ -234,6 +241,147 @@ export default function SrtPanel({ onLog, draftPath, onReanalyze }: SrtPanelProp
     }
   }
 
+  // ============ BATCH MODE FUNCTIONS ============
+
+  // Select folder for batch mode (no audio matching)
+  const handleSelectBatchFolder = async () => {
+    if (!ipcRenderer) {
+      onLog('error', 'Electron IPC não disponível')
+      return
+    }
+
+    onLog('info', 'Selecionando pasta para inserção em massa...')
+
+    try {
+      const result = await ipcRenderer.invoke('select-srt-folder')
+      if (!result) {
+        onLog('warning', 'Seleção cancelada')
+        return
+      }
+      if (result.error) {
+        onLog('error', result.error)
+        return
+      }
+
+      setSrtFolder(result.path)
+      setSrtFolders([result.path])
+      onLog('success', `Pasta selecionada: ${result.name} (${result.srtCount} arquivos .srt)`)
+
+      // Scan SRTs for batch mode (no audio matching needed)
+      await scanBatchFiles(result.path)
+    } catch (error) {
+      onLog('error', 'Erro: ' + error)
+    }
+  }
+
+  // Scan SRT files for batch mode
+  const scanBatchFiles = async (folder: string, append: boolean = false) => {
+    if (!ipcRenderer) return
+
+    setIsScanning(true)
+    onLog('info', append ? 'Adicionando legendas...' : 'Escaneando arquivos SRT...')
+
+    try {
+      const result = await ipcRenderer.invoke('scan-srt-batch', { srtFolder: folder })
+      if (result.error) {
+        onLog('error', result.error)
+        return
+      }
+
+      const filesWithSelection = result.files.map((f: SrtMatch) => ({ ...f, selected: true }))
+
+      if (append) {
+        setBatchFiles(prev => {
+          const existingFiles = new Set(prev.map(p => p.srtFile))
+          const newFiles = filesWithSelection.filter((f: SrtMatch) => !existingFiles.has(f.srtFile))
+          return [...prev, ...newFiles]
+        })
+        onLog('success', `+${result.files.length} arquivos adicionados`)
+      } else {
+        setBatchFiles(filesWithSelection)
+        onLog('success', `${result.files.length} arquivos SRT encontrados`)
+      }
+
+      setShowBatchPreview(true)
+    } catch (error) {
+      onLog('error', 'Erro ao escanear: ' + error)
+    } finally {
+      setIsScanning(false)
+    }
+  }
+
+  // Add more files to batch
+  const handleAddBatchFolder = async () => {
+    if (!ipcRenderer) return
+
+    try {
+      const result = await ipcRenderer.invoke('select-srt-folder')
+      if (!result) return
+      if (result.error) {
+        onLog('error', result.error)
+        return
+      }
+
+      setSrtFolders(prev => prev.includes(result.path) ? prev : [...prev, result.path])
+      await scanBatchFiles(result.path, true)
+    } catch (error) {
+      onLog('error', 'Erro: ' + error)
+    }
+  }
+
+  // Toggle batch file selection
+  const toggleBatchSelection = (index: number) => {
+    setBatchFiles(prev => prev.map((f, i) => i === index ? { ...f, selected: !f.selected } : f))
+  }
+
+  // Insert batch subtitles sequentially
+  const handleInsertBatch = async () => {
+    if (!draftPath || !ipcRenderer) return
+
+    const selectedFiles = batchFiles.filter(f => f.selected)
+    if (selectedFiles.length === 0) {
+      onLog('warning', 'Selecione pelo menos uma legenda!')
+      return
+    }
+
+    setIsProcessing(true)
+    setShowBatchPreview(false)
+    onLog('info', `Inserindo ${selectedFiles.length} legendas em sequência...`)
+
+    try {
+      const result = await ipcRenderer.invoke('insert-srt-batch', {
+        draftPath,
+        srtFiles: selectedFiles.map(f => f.srtPath),
+        createTitle,
+        gapMs: gapSeconds * 1000000,  // Convert seconds to microseconds
+      })
+
+      if (result.error) {
+        onLog('error', result.error)
+      } else {
+        result.logs?.forEach((log: string) => onLog('info', log))
+        onLog('success', `Inserido! ${result.stats.totalSubtitles} segmentos, duração total: ${formatDuration(result.stats.totalDuration)}`)
+        setBatchFiles(prev => prev.map(f => selectedFiles.some(s => s.srtPath === f.srtPath) ? { ...f, selected: false } : f))
+        onReanalyze?.()
+      }
+    } catch (error) {
+      onLog('error', 'Erro: ' + error)
+    }
+
+    setIsProcessing(false)
+  }
+
+  // Helper to format duration
+  const formatDuration = (ms: number) => {
+    const totalSec = Math.floor(ms / 1000000)
+    const min = Math.floor(totalSec / 60)
+    const sec = totalSec % 60
+    return `${min}:${sec.toString().padStart(2, '0')}`
+  }
+
+  const batchSelectedCount = batchFiles.filter(f => f.selected).length
+  const batchTotalSubtitles = batchFiles.filter(f => f.selected).reduce((sum, f) => sum + f.subtitleCount, 0)
+
   const hasProject = !!draftPath
 
   return (
@@ -249,6 +397,28 @@ export default function SrtPanel({ onLog, draftPath, onReanalyze }: SrtPanelProp
         </div>
       </div>
 
+      {/* Mode Toggle */}
+      <div className="flex gap-2 p-1 bg-white/5 rounded-lg">
+        <button
+          onClick={() => setBatchMode(false)}
+          className={`flex-1 py-2 px-3 rounded-md text-xs font-medium transition-all flex items-center justify-center gap-1.5 ${
+            !batchMode ? 'bg-white/10 text-white' : 'text-text-muted hover:text-white'
+          }`}
+        >
+          <Music className="w-3.5 h-3.5" />
+          Com Áudio
+        </button>
+        <button
+          onClick={() => setBatchMode(true)}
+          className={`flex-1 py-2 px-3 rounded-md text-xs font-medium transition-all flex items-center justify-center gap-1.5 ${
+            batchMode ? 'bg-white/10 text-white' : 'text-text-muted hover:text-white'
+          }`}
+        >
+          <Layers className="w-3.5 h-3.5" />
+          Em Massa
+        </button>
+      </div>
+
       {/* Warning if no project */}
       {!hasProject && (
         <div className="p-3 rounded-xl bg-yellow-500/10 border border-yellow-500/20 text-sm text-yellow-400">
@@ -256,35 +426,38 @@ export default function SrtPanel({ onLog, draftPath, onReanalyze }: SrtPanelProp
         </div>
       )}
 
-      {/* Folder Selection */}
-      <div className="space-y-3">
-        <label className="flex items-center gap-2 text-sm font-medium text-text-secondary">
-          <FolderOpen className="w-4 h-4" />
-          PASTA DAS LEGENDAS
-        </label>
-
-        <div className="flex gap-2">
-          <input
-            type="text"
-            value={srtFolder || ''}
-            readOnly
-            placeholder="Selecione a pasta com arquivos .srt"
-            className="input flex-1 text-xs"
-          />
-          <button
-            onClick={handleSelectFolder}
-            disabled={isScanning}
-            className="btn-secondary px-3"
-            title="Selecionar pasta"
-          >
-            {isScanning ? (
-              <span className="w-4 h-4 border-2 border-white/30 border-t-white rounded-full animate-spin" />
-            ) : (
+      {/* ============ NORMAL MODE ============ */}
+      {!batchMode && (
+        <>
+          {/* Folder Selection */}
+          <div className="space-y-3">
+            <label className="flex items-center gap-2 text-sm font-medium text-text-secondary">
               <FolderOpen className="w-4 h-4" />
-            )}
-          </button>
-        </div>
-      </div>
+              PASTA DAS LEGENDAS
+            </label>
+
+            <div className="flex gap-2">
+              <input
+                type="text"
+                value={srtFolder || ''}
+                readOnly
+                placeholder="Selecione a pasta com arquivos .srt"
+                className="input flex-1 text-xs"
+              />
+              <button
+                onClick={handleSelectFolder}
+                disabled={isScanning}
+                className="btn-secondary px-3"
+                title="Selecionar pasta"
+              >
+                {isScanning ? (
+                  <span className="w-4 h-4 border-2 border-white/30 border-t-white rounded-full animate-spin" />
+                ) : (
+                  <FolderOpen className="w-4 h-4" />
+                )}
+              </button>
+            </div>
+          </div>
 
       {/* Scan Stats */}
       {scanStats && (
@@ -563,6 +736,261 @@ export default function SrtPanel({ onLog, draftPath, onReanalyze }: SrtPanelProp
           </>
         )}
       </AnimatePresence>
+        </>
+      )}
+
+      {/* ============ BATCH MODE ============ */}
+      {batchMode && (
+        <>
+          {/* Folder Selection */}
+          <div className="space-y-3">
+            <label className="flex items-center gap-2 text-sm font-medium text-text-secondary">
+              <FolderOpen className="w-4 h-4" />
+              PASTA DAS LEGENDAS
+            </label>
+
+            <div className="flex gap-2">
+              <input
+                type="text"
+                value={srtFolder || ''}
+                readOnly
+                placeholder="Selecione a pasta com arquivos .srt"
+                className="input flex-1 text-xs"
+              />
+              <button
+                onClick={handleSelectBatchFolder}
+                disabled={isScanning}
+                className="btn-secondary px-3"
+                title="Selecionar pasta"
+              >
+                {isScanning ? (
+                  <span className="w-4 h-4 border-2 border-white/30 border-t-white rounded-full animate-spin" />
+                ) : (
+                  <FolderOpen className="w-4 h-4" />
+                )}
+              </button>
+            </div>
+          </div>
+
+          {/* Batch Stats */}
+          {batchFiles.length > 0 && (
+            <div className="p-3 rounded-xl bg-white/5 border border-border-light space-y-2">
+              <div className="flex items-center justify-between text-sm">
+                <div className="flex items-center gap-4">
+                  <div className="flex items-center gap-1.5">
+                    <FileText className="w-4 h-4" style={{ color: '#9c4937' }} />
+                    <span className="text-white font-medium">{batchFiles.length}</span>
+                    <span className="text-text-muted">arquivos</span>
+                  </div>
+                  <div className="flex items-center gap-1.5">
+                    <Check className="w-4 h-4 text-green-400" />
+                    <span className="text-green-400 font-medium">{batchSelectedCount}</span>
+                    <span className="text-text-muted">selecionados</span>
+                  </div>
+                </div>
+                <button
+                  onClick={() => setShowBatchPreview(true)}
+                  className="text-xs text-primary hover:underline flex items-center gap-1"
+                >
+                  <Eye className="w-3 h-3" />
+                  Ver detalhes
+                </button>
+              </div>
+            </div>
+          )}
+
+          {/* Gap Configuration */}
+          <div className="space-y-3">
+            <label className="flex items-center gap-2 text-sm font-medium text-text-secondary">
+              ESPAÇO ENTRE LEGENDAS
+            </label>
+            <div className="flex items-center gap-3">
+              <input
+                type="range"
+                min="0"
+                max="10"
+                step="0.5"
+                value={gapSeconds}
+                onChange={(e) => setGapSeconds(parseFloat(e.target.value))}
+                className="flex-1 accent-[#9c4937]"
+              />
+              <span className="text-sm text-white font-medium w-12 text-center">
+                {gapSeconds}s
+              </span>
+            </div>
+            <p className="text-[10px] text-text-muted">
+              Espaço entre cada bloco de legenda para diferenciar os áudios
+            </p>
+          </div>
+
+          {/* Options */}
+          <div className="space-y-3">
+            <label className="text-sm font-medium text-text-secondary">OPÇÕES</label>
+            <label className="flex items-center gap-3 cursor-pointer group">
+              <input
+                type="checkbox"
+                checked={createTitle}
+                onChange={(e) => setCreateTitle(e.target.checked)}
+                className="w-4 h-4 rounded border-border-light bg-white/5 focus:ring-offset-0"
+                style={{ accentColor: '#9c4937' }}
+              />
+              <BookOpen className="w-4 h-4 text-text-muted transition-colors" />
+              <span className="text-sm text-text-primary">Criar texto de título</span>
+            </label>
+          </div>
+
+          {/* Action Button */}
+          <button
+            onClick={handleInsertBatch}
+            disabled={!hasProject || isProcessing || batchSelectedCount === 0}
+            className="w-full py-4 px-4 text-white font-semibold rounded-xl transition-all disabled:opacity-50 disabled:cursor-not-allowed flex items-center justify-center gap-2 hover:brightness-110"
+            style={{ backgroundColor: '#9c4937' }}
+          >
+            {isProcessing ? (
+              <>
+                <span className="w-4 h-4 border-2 border-white/30 border-t-white rounded-full animate-spin" />
+                Inserindo...
+              </>
+            ) : (
+              <>
+                <Upload className="w-4 h-4" />
+                INSERIR {batchSelectedCount > 0 ? `${batchSelectedCount} LEGENDAS (~${batchTotalSubtitles} segs)` : 'LEGENDAS'}
+              </>
+            )}
+          </button>
+
+          {/* Batch Preview Modal */}
+          <AnimatePresence>
+            {showBatchPreview && (
+              <>
+                <motion.div
+                  initial={{ opacity: 0 }}
+                  animate={{ opacity: 1 }}
+                  exit={{ opacity: 0 }}
+                  className="fixed inset-0 bg-black/70 z-50"
+                  onClick={() => setShowBatchPreview(false)}
+                />
+                <motion.div
+                  initial={{ opacity: 0, scale: 0.95 }}
+                  animate={{ opacity: 1, scale: 1 }}
+                  exit={{ opacity: 0, scale: 0.95 }}
+                  className="fixed inset-x-4 top-16 bottom-16 md:inset-x-16 bg-background-dark border border-border-light rounded-xl z-50 flex flex-col overflow-hidden"
+                >
+                  {/* Header */}
+                  <div className="flex items-center justify-between p-3 border-b border-border-light flex-shrink-0">
+                    <div>
+                      <h2 className="text-sm font-bold text-white">Inserção em Massa</h2>
+                      <p className="text-[10px] text-text-muted">
+                        {batchSelectedCount}/{batchFiles.length} selecionados • ~{batchTotalSubtitles} segs • gap: {gapSeconds}s
+                      </p>
+                    </div>
+                    <button
+                      onClick={() => setShowBatchPreview(false)}
+                      className="p-1.5 hover:bg-white/10 rounded-lg transition-colors"
+                    >
+                      <X className="w-4 h-4 text-text-secondary" />
+                    </button>
+                  </div>
+
+                  {/* Content */}
+                  <div className="flex-1 overflow-auto p-3 space-y-1">
+                    <div className="flex items-center justify-between mb-2">
+                      <span className="text-xs font-semibold text-white">
+                        Arquivos SRT ({batchFiles.length})
+                      </span>
+                      <div className="flex gap-2">
+                        <button
+                          onClick={() => setBatchFiles(prev => prev.map(f => ({ ...f, selected: true })))}
+                          className="text-[10px] text-primary hover:underline"
+                        >
+                          Todos
+                        </button>
+                        <button
+                          onClick={() => setBatchFiles(prev => prev.map(f => ({ ...f, selected: false })))}
+                          className="text-[10px] text-text-muted hover:underline"
+                        >
+                          Nenhum
+                        </button>
+                      </div>
+                    </div>
+                    <div className="space-y-0.5">
+                      {batchFiles.map((f, i) => (
+                        <div
+                          key={f.srtPath}
+                          onClick={() => toggleBatchSelection(i)}
+                          className={`py-1 px-2 rounded border cursor-pointer transition-all ${
+                            f.selected
+                              ? 'bg-green-500/10 border-green-500/30'
+                              : 'bg-white/5 border-transparent hover:border-border-light'
+                          }`}
+                        >
+                          <div className="flex items-center justify-between">
+                            <div className="flex items-center gap-1.5">
+                              <input
+                                type="checkbox"
+                                checked={f.selected}
+                                onChange={() => {}}
+                                className="w-3 h-3"
+                                style={{ accentColor: '#22c55e' }}
+                              />
+                              <span className="text-[11px] text-white truncate max-w-[280px]">{f.baseName}</span>
+                            </div>
+                            <div className="flex items-center gap-1 text-[10px] text-text-muted flex-shrink-0">
+                              <span>{f.subtitleCount} segs</span>
+                            </div>
+                          </div>
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+
+                  {/* Footer */}
+                  <div className="p-3 border-t border-border-light flex items-center justify-between flex-shrink-0">
+                    <div className="flex items-center gap-2">
+                      <button
+                        onClick={handleAddBatchFolder}
+                        disabled={isScanning}
+                        className="btn-secondary py-1.5 px-3 text-xs flex items-center gap-1.5"
+                        title="Adicionar mais arquivos"
+                      >
+                        {isScanning ? (
+                          <span className="w-3 h-3 border-2 border-white/30 border-t-white rounded-full animate-spin" />
+                        ) : (
+                          <Plus className="w-3.5 h-3.5" />
+                        )}
+                        Adicionar pasta
+                      </button>
+                      <span className="text-[10px] text-text-muted">
+                        {batchSelectedCount > 0 ? (
+                          <span className="text-green-400">{batchSelectedCount} selecionados</span>
+                        ) : (
+                          <span>Nenhum selecionado</span>
+                        )}
+                      </span>
+                    </div>
+                    <div className="flex gap-2">
+                      <button
+                        onClick={() => setShowBatchPreview(false)}
+                        className="btn-secondary py-1.5 px-3 text-xs"
+                      >
+                        Fechar
+                      </button>
+                      <button
+                        onClick={handleInsertBatch}
+                        disabled={batchSelectedCount === 0}
+                        className="py-1.5 px-4 text-xs text-white font-semibold rounded-lg transition-all disabled:opacity-50 disabled:cursor-not-allowed hover:brightness-110"
+                        style={{ backgroundColor: '#9c4937' }}
+                      >
+                        Inserir {batchSelectedCount}
+                      </button>
+                    </div>
+                  </div>
+                </motion.div>
+              </>
+            )}
+          </AnimatePresence>
+        </>
+      )}
     </div>
   )
 }

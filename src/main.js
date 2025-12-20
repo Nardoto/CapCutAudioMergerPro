@@ -390,6 +390,40 @@ ipcMain.handle('insert-srt', async (_, { draftPath, srtFolders, createTitle, sel
   return runPython({ action: 'insert_srt', draftPath, srtFolders, createTitle, selectedFilePaths: selectedFiles });
 });
 
+// ============ BATCH SRT SCAN (no audio matching) ============
+ipcMain.handle('scan-srt-batch', async (_, { srtFolder }) => {
+  try {
+    const files = fs.readdirSync(srtFolder);
+    const srtFiles = files.filter(f => f.toLowerCase().endsWith('.srt'));
+
+    const result = srtFiles.map(srtFile => {
+      const srtPath = path.join(srtFolder, srtFile);
+      const baseName = path.basename(srtFile, '.srt');
+      const srtContent = fs.readFileSync(srtPath, 'utf-8');
+      const subtitleCount = (srtContent.match(/^\d+$/gm) || []).length;
+
+      return {
+        srtFile,
+        srtPath,
+        baseName,
+        subtitleCount,
+        matched: false
+      };
+    });
+
+    return { files: result };
+  } catch (error) {
+    return { error: error.message };
+  }
+});
+
+// ============ INSERT SRT BATCH (sequential, no audio reference) ============
+ipcMain.handle('insert-srt-batch', async (_, { draftPath, srtFiles, createTitle, gapMs }) => {
+  // srtFiles is an array of full paths
+  // gapMs is the gap between each SRT block in microseconds
+  return runPython({ action: 'insert_srt_batch', draftPath, srtFiles, createTitle, gapMs });
+});
+
 // ============ BACKUP / UNDO SYSTEM (Multi-level) ============
 
 // List all backups for a project
