@@ -1220,13 +1220,21 @@ ipcMain.handle('detect-capcut-folder', async (event, { customPath } = {}) => {
       const draftPath = path.join(itemPath, 'draft_content.json');
 
       if (fs.statSync(itemPath).isDirectory() && fs.existsSync(draftPath)) {
-        // Pegar data de modificação
+        // Pegar data de modificação e duração
         const stats = fs.statSync(draftPath);
+        let duration = 0;
+        try {
+          const draftContent = JSON.parse(fs.readFileSync(draftPath, 'utf-8'));
+          duration = draftContent.duration || 0;
+        } catch (e) {
+          // Ignore parse errors
+        }
         projects.push({
           name: item,
           path: itemPath,
           draftPath: draftPath,
           modifiedAt: stats.mtime.toISOString(),
+          duration: duration,
         });
       }
     }
@@ -1355,6 +1363,836 @@ ipcMain.handle('google-oauth-browser', async () => {
       reject(new Error('OAuth timeout'));
     }, 300000);
   });
+});
+
+// ============ MERGE PROJECTS ============
+ipcMain.handle('merge-projects', async (_, { projectPaths, outputName, mode = 'flat' }) => {
+  try {
+    const capCutDrafts = path.join(app.getPath('appData'), '..', 'Local', 'CapCut', 'User Data', 'Projects', 'com.lveditor.draft');
+    if (!fs.existsSync(capCutDrafts)) {
+      return { error: 'Pasta de projetos do CapCut não encontrada.' };
+    }
+
+    if (!projectPaths || projectPaths.length < 2) {
+      return { error: 'Selecione pelo menos 2 projetos para mesclar.' };
+    }
+
+    const timestamp = Date.now();
+    const microTimestamp = timestamp * 1000 + Math.floor(Math.random() * 1000);
+
+    // Sanitize project name - remove invalid Windows characters: \ / : * ? " < > |
+    const sanitizeName = (name) => name.replace(/[\\/:*?"<>|]/g, '').trim() || `Merged_${timestamp}`;
+    const projectName = sanitizeName(outputName || `Merged_${new Date().toISOString().slice(0, 10).replace(/-/g, '')}_${timestamp}`);
+    const projectPath = path.join(capCutDrafts, projectName);
+    const newDraftId = generateUUID();
+
+    // Check if already exists
+    if (fs.existsSync(projectPath)) {
+      return { error: 'Já existe um projeto com esse nome' };
+    }
+
+    // Create project folder
+    fs.mkdirSync(projectPath, { recursive: true });
+
+    // Read all source projects
+    const sourceProjects = [];
+    for (const srcPath of projectPaths) {
+      const draftPath = path.join(srcPath, 'draft_content.json');
+      if (!fs.existsSync(draftPath)) {
+        return { error: `Projeto não encontrado: ${path.basename(srcPath)}` };
+      }
+      const content = JSON.parse(fs.readFileSync(draftPath, 'utf-8'));
+
+      // Fix text content format - CapCut expects styles first, not text
+      // When content starts with {"text":, CapCut wraps it in another {"text":} layer
+      if (content.materials?.texts) {
+        content.materials.texts = content.materials.texts.map(txt => {
+          if (txt.content && typeof txt.content === 'string') {
+            try {
+              const parsed = JSON.parse(txt.content);
+              // Reorder: styles first, then text, then other properties
+              if (parsed.text && parsed.styles) {
+                const reordered = {
+                  styles: parsed.styles,
+                  text: parsed.text
+                };
+                // Copy any other properties
+                for (const key of Object.keys(parsed)) {
+                  if (key !== 'styles' && key !== 'text') {
+                    reordered[key] = parsed[key];
+                  }
+                }
+                txt.content = JSON.stringify(reordered);
+              }
+            } catch (e) {
+              // Keep original if can't parse
+            }
+          }
+          return txt;
+        });
+      }
+
+      sourceProjects.push({
+        path: srcPath,
+        name: path.basename(srcPath),
+        content
+      });
+    }
+
+    // Use first project as base for canvas config
+    const baseProject = sourceProjects[0].content;
+
+    // Create merged project structure
+    const mergedProject = {
+      canvas_config: baseProject.canvas_config || { height: 1080, width: 1920, ratio: 'original' },
+      color_space: baseProject.color_space || 0,
+      config: baseProject.config || {},
+      cover: null,
+      create_time: Math.floor(timestamp / 1000),
+      draft_type: 'video',
+      duration: 0,
+      extra_info: null,
+      fps: baseProject.fps || 30.0,
+      free_render_index_mode_on: false,
+      function_assistant_info: baseProject.function_assistant_info || {},
+      group_container: null,
+      id: newDraftId,
+      is_drop_frame_timecode: false,
+      keyframe_graph_list: [],
+      keyframes: { adjusts: [], audios: [], effects: [], filters: [], handwrites: [], stickers: [], texts: [], videos: [] },
+      last_modified_platform: baseProject.last_modified_platform || {},
+      lyrics_effects: [],
+      materials: {
+        ai_translates: [], audio_balances: [], audio_effects: [], audio_fades: [],
+        audio_pannings: [], audio_pitch_shifts: [], audio_track_indexes: [], audios: [],
+        beats: [], canvases: [], chromas: [], color_curves: [], common_mask: [],
+        digital_human_model_dressing: [], digital_humans: [], drafts: [], effects: [],
+        filter_mask_infos: [], filters: [], green_screens: [], handwrites: [],
+        hsl: [], images: [], log_color_wheels: [], loudnesses: [], manual_deformations: [],
+        material_animations: [], material_colors: [], material_group_infos: [],
+        multi_language_refs: [], placeholder_infos: [], plugin_contexts: [],
+        primary_color_wheels: [], realtime_denoises: [], shape_masks: [], shapes: [],
+        smart_crops: [], smart_relights: [], sound_channel_mappings: [], speeds: [],
+        stickers: [], tail_leaders: [], text_templates: [], texts: [], time_marks: [],
+        transitions: [], video_effects: [], video_trackings: [], videos: [],
+        vocal_separations: []
+      },
+      mutable_config: null,
+      name: projectName,
+      new_version: '',
+      platform: baseProject.platform || {},
+      relationships: [],
+      render_index_track_mode_on: false,
+      retouch_cover: null,
+      source: 'default',
+      static_cover_image_path: '',
+      tracks: mode === 'groups' ? [{ type: 'video', segments: [], attribute: 0, flag: 0, id: generateUUID() }] : [],
+      update_time: Math.floor(timestamp / 1000),
+      version: 360000
+    };
+
+    // ========== FLAT MODE: Merge all tracks directly ==========
+    if (mode === 'flat') {
+      let currentTimeOffset = 0;
+      const idMapping = {}; // Map old IDs to new IDs
+
+      for (const srcProject of sourceProjects) {
+        const srcContent = srcProject.content;
+        const projectDuration = srcContent.duration || 0;
+
+        // Copy all materials with new IDs
+        const materialTypes = [
+          'videos', 'audios', 'texts', 'text_templates', 'effects', 'filters',
+          'transitions', 'stickers', 'canvases', 'speeds', 'sound_channel_mappings',
+          'vocal_separations', 'material_colors', 'placeholder_infos', 'beats',
+          'audio_fades', 'audio_effects', 'loudnesses', 'material_animations'
+        ];
+
+        for (const matType of materialTypes) {
+          if (srcContent.materials?.[matType]) {
+            for (const mat of srcContent.materials[matType]) {
+              const newId = generateUUID();
+              idMapping[mat.id] = newId;
+              const newMat = { ...mat, id: newId };
+              if (!mergedProject.materials[matType]) {
+                mergedProject.materials[matType] = [];
+              }
+              mergedProject.materials[matType].push(newMat);
+            }
+          }
+        }
+
+        // Copy and offset all tracks
+        for (const srcTrack of (srcContent.tracks || [])) {
+          // Find or create track of same type
+          let targetTrack = mergedProject.tracks.find(t => t.type === srcTrack.type);
+          if (!targetTrack) {
+            targetTrack = {
+              type: srcTrack.type,
+              segments: [],
+              attribute: srcTrack.attribute || 0,
+              flag: srcTrack.flag || 0,
+              id: generateUUID()
+            };
+            mergedProject.tracks.push(targetTrack);
+          }
+
+          // Copy segments with offset and mapped IDs
+          for (const seg of (srcTrack.segments || [])) {
+            const newSeg = JSON.parse(JSON.stringify(seg)); // Deep clone
+            newSeg.id = generateUUID();
+
+            // Offset timing
+            if (newSeg.target_timerange) {
+              newSeg.target_timerange.start = (newSeg.target_timerange.start || 0) + currentTimeOffset;
+            }
+
+            // Map material IDs
+            if (newSeg.material_id && idMapping[newSeg.material_id]) {
+              newSeg.material_id = idMapping[newSeg.material_id];
+            }
+
+            // Map extra_material_refs
+            if (newSeg.extra_material_refs) {
+              newSeg.extra_material_refs = newSeg.extra_material_refs.map(ref => idMapping[ref] || ref);
+            }
+
+            targetTrack.segments.push(newSeg);
+          }
+        }
+
+        currentTimeOffset += projectDuration;
+      }
+
+      mergedProject.duration = currentTimeOffset;
+
+      // Save and register project (same as groups mode below)
+      const draftPath = path.join(projectPath, 'draft_content.json');
+      fs.writeFileSync(draftPath, JSON.stringify(mergedProject));
+
+      // Create draft_info.json
+      const draftInfo = {
+        draft_cloud_capcut_purchase_info: null, draft_cloud_purchase_info: null, draft_cloud_template_id: '',
+        draft_cloud_tutorial_info: null, draft_cloud_videocut_purchase_info: null, draft_cover: '', draft_deeplink_url: '',
+        draft_enterprise_info: null, draft_fold_path: projectPath, draft_id: newDraftId, draft_is_ai_shorts: false,
+        draft_is_article_video_draft: false, draft_is_from_deeplink: false, draft_is_invisible: false, draft_materials_copied: false,
+        draft_materials_copied_path: null, draft_name: projectName, draft_new_version: '', draft_removable_storage_device: '',
+        draft_root_path: capCutDrafts, draft_segment_extra_info: null, draft_timeline_materials_size: 0, draft_type: 'normal',
+        tm_draft_cloud_completed: null, tm_draft_cloud_modified: 0, tm_draft_create: Math.floor(timestamp / 1000),
+        tm_draft_modified: Math.floor(timestamp / 1000), tm_draft_removed: 0
+      };
+      fs.writeFileSync(path.join(projectPath, 'draft_info.json'), JSON.stringify(draftInfo, null, 2));
+
+      // Create draft_meta_info.json
+      const draftMetaInfo = {
+        cloud_draft_cover: true, cloud_draft_sync: true, draft_cloud_last_action_download: false,
+        draft_cloud_purchase_info: '', draft_cloud_template_id: '', draft_cloud_tutorial_info: '',
+        draft_cloud_videocut_purchase_info: '', draft_cover: '',
+        draft_enterprise_info: { draft_enterprise_extra: '', draft_enterprise_id: '', draft_enterprise_name: '', enterprise_material: [] },
+        draft_fold_path: projectPath.replace(/\\/g, '/'), draft_id: newDraftId,
+        draft_is_ai_shorts: false, draft_is_article_video_draft: false, draft_is_cloud_temp_draft: false,
+        draft_is_from_deeplink: 'false', draft_is_invisible: false, draft_is_web_article_video: false,
+        draft_materials: [
+          { type: 0, value: [] }, { type: 1, value: [] }, { type: 2, value: [] },
+          { type: 3, value: [] }, { type: 6, value: [] }, { type: 7, value: [] }, { type: 8, value: [] }
+        ],
+        draft_materials_copied_info: [], draft_name: projectName, draft_need_rename_folder: false,
+        draft_new_version: '', draft_removable_storage_device: '',
+        draft_root_path: capCutDrafts.replace(/\\/g, '/'), draft_segment_extra_info: [],
+        draft_timeline_materials_size_: 0, draft_type: '',
+        tm_draft_create: microTimestamp, tm_draft_modified: microTimestamp, tm_draft_removed: 0, tm_duration: currentTimeOffset
+      };
+      fs.writeFileSync(path.join(projectPath, 'draft_meta_info.json'), JSON.stringify(draftMetaInfo));
+
+      // Register in root_meta_info.json
+      const rootMetaPath = path.join(capCutDrafts, 'root_meta_info.json');
+      let rootMeta = { all_draft_store: [], draft_ids: 0, root_path: capCutDrafts.replace(/\\/g, '/') };
+      if (fs.existsSync(rootMetaPath)) {
+        try { rootMeta = JSON.parse(fs.readFileSync(rootMetaPath, 'utf-8')); } catch (e) { console.error('Error reading root_meta_info:', e); }
+      }
+
+      const newDraftEntry = {
+        cloud_draft_cover: true, cloud_draft_sync: true, draft_cloud_last_action_download: false,
+        draft_cloud_purchase_info: '', draft_cloud_template_id: '', draft_cloud_tutorial_info: '',
+        draft_cloud_videocut_purchase_info: '', draft_cover: '',
+        draft_fold_path: projectPath.replace(/\\/g, '/'), draft_id: newDraftId,
+        draft_is_ai_shorts: false, draft_is_cloud_temp_draft: false, draft_is_invisible: false,
+        draft_is_web_article_video: false, draft_json_file: draftPath.replace(/\\/g, '/'),
+        draft_name: projectName, draft_new_version: '', draft_root_path: capCutDrafts.replace(/\\/g, '/'),
+        draft_timeline_materials_size: 0, draft_type: '', draft_web_article_video_enter_from: '',
+        streaming_edit_draft_ready: true, tm_draft_cloud_completed: '', tm_draft_cloud_entry_id: -1,
+        tm_draft_cloud_modified: 0, tm_draft_cloud_parent_entry_id: -1, tm_draft_cloud_space_id: -1,
+        tm_draft_cloud_user_id: -1, tm_draft_create: microTimestamp, tm_draft_modified: microTimestamp,
+        tm_draft_removed: 0, tm_duration: currentTimeOffset
+      };
+
+      rootMeta.all_draft_store.unshift(newDraftEntry);
+      rootMeta.draft_ids = (rootMeta.draft_ids || 0) + 1;
+      fs.writeFileSync(rootMetaPath, JSON.stringify(rootMeta));
+
+      return {
+        success: true,
+        path: projectPath,
+        name: projectName,
+        draftPath: draftPath,
+        projectCount: sourceProjects.length,
+        totalDuration: currentTimeOffset
+      };
+    }
+
+    // ========== GROUPS MODE: Create composite clips ==========
+
+    // Create subdraft folder for groups (like CapCut does manually)
+    const subdraftFolder = path.join(projectPath, 'subdraft');
+    fs.mkdirSync(subdraftFolder, { recursive: true });
+
+    // Process each source project and convert to a group
+    let currentTime = 0;
+    let clipNumber = 1;
+
+    for (const srcProject of sourceProjects) {
+      const srcContent = srcProject.content;
+      const projectDuration = srcContent.duration || 0;
+
+      // Generate unique IDs
+      const draftId = generateUUID();
+      const subdraftId = generateUUID();
+      const combinationId = generateUUID();
+      const videoMaterialId = generateUUID();
+      const segmentId = generateUUID();
+      const canvasId = generateUUID();
+      const speedId = generateUUID();
+      const soundChannelId = generateUUID();
+      const placeholderInfoId = generateUUID();
+      const materialColorId = generateUUID();
+      const vocalSeparationId = generateUUID();
+
+      // Create subdraft folder and save draft content (like CapCut does)
+      const subdraftPath = path.join(subdraftFolder, subdraftId);
+      fs.mkdirSync(subdraftPath, { recursive: true });
+      fs.writeFileSync(path.join(subdraftPath, 'draft_content.json'), JSON.stringify(srcContent));
+
+      // Create sub_draft_config.json
+      const subDraftConfig = {
+        draft_id: subdraftId,
+        name: '',
+        type: 'combination'
+      };
+      fs.writeFileSync(path.join(subdraftPath, 'sub_draft_config.json'), JSON.stringify(subDraftConfig));
+
+      // Build draft_file_path like CapCut does (with placeholder)
+      const draftFilePath = `##_draftpath_placeholder_${newDraftId}_##\\subdraft\\${subdraftId}\\draft_content.json`;
+
+      // Create draft entry (the group content) - must match CapCut's expected structure
+      const draftEntry = {
+        aimusic_mv_template_info: null,
+        category_id: '',
+        category_name: '',
+        combination_id: combinationId,
+        combination_type: 'none',
+        draft: srcContent,
+        draft_config_path: '',
+        draft_cover_path: '',
+        draft_file_path: draftFilePath,
+        formula_id: '',
+        id: draftId,
+        name: '',
+        precompile_combination: false,
+        type: 'combination'
+      };
+      mergedProject.materials.drafts.push(draftEntry);
+
+      // Create canvas for this segment
+      const canvasEntry = {
+        album_image: '', blur: 0.0, color: '', id: canvasId,
+        image: '', image_id: '', image_name: '', source_platform: 0, team_id: '', type: 'canvas_color'
+      };
+      mergedProject.materials.canvases.push(canvasEntry);
+
+      // Create speed entry
+      const speedEntry = {
+        curve_speed: null, id: speedId, mode: 0, speed: 1.0, type: 'speed'
+      };
+      mergedProject.materials.speeds.push(speedEntry);
+
+      // Create sound channel mapping
+      const soundChannelEntry = {
+        audio_channel_mapping: 0, id: soundChannelId, is_config_open: false, type: ''
+      };
+      mergedProject.materials.sound_channel_mappings.push(soundChannelEntry);
+
+      // Create placeholder info
+      const placeholderInfoEntry = {
+        error_path: '', id: placeholderInfoId, meta_type: '', res_path: '', res_request_id: '', resource_id: '', source_from: '', source_platform: 0, team_id: '', type: 'placeholder_info'
+      };
+      mergedProject.materials.placeholder_infos.push(placeholderInfoEntry);
+
+      // Create material color
+      const materialColorEntry = {
+        color_lut_path_list: [], color_model_lut_path_list: [], color_model_path: '', enable_skin_tone_restore: false, enable_smart: 0, formula_id: '', id: materialColorId, intensity: 1.0, path: '', skin_tone_restore_path: '', type: 'material_color'
+      };
+      mergedProject.materials.material_colors.push(materialColorEntry);
+
+      // Create vocal separation
+      const vocalSeparationEntry = {
+        choice: 0, enter_from: '', final_algorithm: '', id: vocalSeparationId, production_path: '', removed_sounds: [], time_range: null, type: 'vocal_separation'
+      };
+      mergedProject.materials.vocal_separations.push(vocalSeparationEntry);
+
+      // Create video material for the group (composite clip)
+      const videoMaterial = {
+        aigc_history_id: '', aigc_item_id: '', aigc_type: 'none',
+        audio_fade: null, beauty_body_auto_preset: null, beauty_body_preset_id: '',
+        beauty_face_auto_preset: { name: '', preset_id: '', rate_map: '', scene: '' },
+        beauty_face_auto_preset_infos: [], beauty_face_preset_infos: [],
+        cartoon_path: '', category_id: '', category_name: '', check_flag: 62978047,
+        content_feature_info: null, corner_pin: null,
+        crop: { lower_left_x: 0, lower_left_y: 1, lower_right_x: 1, lower_right_y: 1, upper_left_x: 0, upper_left_y: 0, upper_right_x: 1, upper_right_y: 0 },
+        crop_ratio: 'free', crop_scale: 1,
+        duration: projectDuration,
+        extra_type_option: 2,  // KEY: This marks it as a composite clip/group
+        formula_id: '', freeze: null,
+        has_audio: true, has_sound_separated: false,
+        height: srcContent.canvas_config?.height || 1080,
+        id: videoMaterialId,
+        intensifies_audio_path: '', intensifies_path: '',
+        is_ai_generate_content: false, is_copyright: false, is_text_edit_overdub: false,
+        is_unified_beauty_mode: false, live_photo_cover_path: '', live_photo_timestamp: -1,
+        local_id: '', local_material_from: '', local_material_id: '',
+        material_id: '',
+        material_name: `Clipe composto${clipNumber}`,  // Name shown in CapCut
+        material_url: '',
+        matting: { custom_matting_id: '', enable_matting_stroke: false, expansion: 0, feather: 0, flag: 0, has_use_quick_brush: false, has_use_quick_eraser: false, interactiveTime: [], path: '', reverse: false, strokes: [] },
+        media_path: '', multi_camera_info: null, object_locked: null, origin_material_id: '',
+        path: '',  // KEY: Empty path indicates it's a group
+        picture_from: 'none', picture_set_category_id: '', picture_set_category_name: '',
+        request_id: '', reverse_intensifies_path: '', reverse_path: '',
+        smart_match_info: null, smart_motion: null, source: 0, source_platform: 0,
+        stable: { matrix_path: '', stable_level: 0, time_range: { duration: 0, start: 0 } },
+        team_id: '', type: 'video',
+        video_algorithm: { ai_background_configs: [], algorithms: [], path: '', time_range: null },
+        width: srcContent.canvas_config?.width || 1920
+      };
+      mergedProject.materials.videos.push(videoMaterial);
+
+      // Create segment referencing the group
+      const segment = {
+        caption_info: null,
+        cartoon: false,
+        clip: { alpha: 1, flip: { horizontal: false, vertical: false }, rotation: 0, scale: { x: 1, y: 1 }, transform: { x: 0, y: 0 } },
+        common_keyframes: [],
+        enable_adjust: true,
+        enable_color_correct_adjust: false,
+        enable_color_curves: true,
+        enable_color_match_adjust: false,
+        enable_color_wheels: true,
+        enable_lut: true,
+        enable_smart_color_adjust: false,
+        extra_material_refs: [
+          draftId,           // Reference to the draft entry (group content)
+          speedId,           // Speed control
+          placeholderInfoId, // Placeholder info
+          canvasId,          // Canvas/background
+          soundChannelId,    // Sound channel mapping
+          materialColorId,   // Material color
+          vocalSeparationId  // Vocal separation
+        ],
+        group_id: '',
+        hdr_settings: { intensity: 1, mode: 1, nits: 1000 },
+        id: segmentId,
+        intensifies_audio: false,
+        is_placeholder: false,
+        is_tone_modify: false,
+        keyframe_refs: [],
+        last_nonzero_volume: 1,
+        material_id: videoMaterialId,
+        render_index: 0,
+        responsive_layout: { enable: false, horizontal_pos_layout: 0, size_layout: 0, target_follow: '', vertical_pos_layout: 0 },
+        reverse: false,
+        source_timerange: { duration: projectDuration, start: 0 },
+        speed: 1,
+        state: 0,
+        target_timerange: { duration: projectDuration, start: currentTime },
+        template_id: '',
+        template_scene: 'default',
+        track_attribute: 0,
+        track_render_index: 0,
+        uniform_scale: { on: true, value: 1 },
+        visible: true,
+        volume: 1
+      };
+      mergedProject.tracks[0].segments.push(segment);
+
+      currentTime += projectDuration;
+      clipNumber++;
+    }
+
+    // Set total duration
+    mergedProject.duration = currentTime;
+
+    // Debug: log drafts count
+    console.log('Merge: Total drafts created:', mergedProject.materials.drafts.length);
+    console.log('Merge: Total videos created:', mergedProject.materials.videos.length);
+
+    // DEBUG: Check content before save
+    if (mergedProject.materials.drafts[0]?.draft?.materials?.texts?.[0]?.content) {
+      console.log('DEBUG MERGE - Before save, draft[0] texts[0].content first 60:', mergedProject.materials.drafts[0].draft.materials.texts[0].content.substring(0, 60));
+    }
+
+    // Save draft_content.json
+    const draftPath = path.join(projectPath, 'draft_content.json');
+    const jsonString = JSON.stringify(mergedProject);
+    console.log('Merge: JSON size:', jsonString.length, 'bytes');
+    fs.writeFileSync(draftPath, jsonString);
+
+    // Create draft_info.json
+    const draftInfo = {
+      draft_cloud_capcut_purchase_info: null, draft_cloud_purchase_info: null, draft_cloud_template_id: '',
+      draft_cloud_tutorial_info: null, draft_cloud_videocut_purchase_info: null, draft_cover: '', draft_deeplink_url: '',
+      draft_enterprise_info: null, draft_fold_path: projectPath, draft_id: newDraftId, draft_is_ai_shorts: false,
+      draft_is_article_video_draft: false, draft_is_from_deeplink: false, draft_is_invisible: false, draft_materials_copied: false,
+      draft_materials_copied_path: null, draft_name: projectName, draft_new_version: '', draft_removable_storage_device: '',
+      draft_root_path: capCutDrafts, draft_segment_extra_info: null, draft_timeline_materials_size: 0, draft_type: 'normal',
+      tm_draft_cloud_completed: null, tm_draft_cloud_modified: 0, tm_draft_create: Math.floor(timestamp / 1000),
+      tm_draft_modified: Math.floor(timestamp / 1000), tm_draft_removed: 0
+    };
+    fs.writeFileSync(path.join(projectPath, 'draft_info.json'), JSON.stringify(draftInfo, null, 2));
+
+    // Create draft_meta_info.json
+    const draftMetaInfo = {
+      cloud_draft_cover: true, cloud_draft_sync: true, draft_cloud_last_action_download: false,
+      draft_cloud_purchase_info: '', draft_cloud_template_id: '', draft_cloud_tutorial_info: '',
+      draft_cloud_videocut_purchase_info: '', draft_cover: '',
+      draft_enterprise_info: { draft_enterprise_extra: '', draft_enterprise_id: '', draft_enterprise_name: '', enterprise_material: [] },
+      draft_fold_path: projectPath.replace(/\\/g, '/'), draft_id: newDraftId,
+      draft_is_ai_shorts: false, draft_is_article_video_draft: false, draft_is_cloud_temp_draft: false,
+      draft_is_from_deeplink: 'false', draft_is_invisible: false, draft_is_web_article_video: false,
+      draft_materials: [
+        { type: 0, value: [] }, { type: 1, value: [] }, { type: 2, value: [] },
+        { type: 3, value: [] }, { type: 6, value: [] }, { type: 7, value: [] }, { type: 8, value: [] }
+      ],
+      draft_materials_copied_info: [], draft_name: projectName, draft_need_rename_folder: false,
+      draft_new_version: '', draft_removable_storage_device: '',
+      draft_root_path: capCutDrafts.replace(/\\/g, '/'), draft_segment_extra_info: [],
+      draft_timeline_materials_size_: 0, draft_type: '',
+      tm_draft_create: microTimestamp, tm_draft_modified: microTimestamp, tm_draft_removed: 0, tm_duration: currentTime
+    };
+    fs.writeFileSync(path.join(projectPath, 'draft_meta_info.json'), JSON.stringify(draftMetaInfo));
+
+    // Register in root_meta_info.json
+    const rootMetaPath = path.join(capCutDrafts, 'root_meta_info.json');
+    let rootMeta = { all_draft_store: [], draft_ids: 0, root_path: capCutDrafts.replace(/\\/g, '/') };
+    if (fs.existsSync(rootMetaPath)) {
+      try { rootMeta = JSON.parse(fs.readFileSync(rootMetaPath, 'utf-8')); } catch (e) { console.error('Error reading root_meta_info:', e); }
+    }
+
+    const newDraftEntry = {
+      cloud_draft_cover: true, cloud_draft_sync: true, draft_cloud_last_action_download: false,
+      draft_cloud_purchase_info: '', draft_cloud_template_id: '', draft_cloud_tutorial_info: '',
+      draft_cloud_videocut_purchase_info: '', draft_cover: '',
+      draft_fold_path: projectPath.replace(/\\/g, '/'), draft_id: newDraftId,
+      draft_is_ai_shorts: false, draft_is_cloud_temp_draft: false, draft_is_invisible: false,
+      draft_is_web_article_video: false, draft_json_file: draftPath.replace(/\\/g, '/'),
+      draft_name: projectName, draft_new_version: '', draft_root_path: capCutDrafts.replace(/\\/g, '/'),
+      draft_timeline_materials_size: 0, draft_type: '', draft_web_article_video_enter_from: '',
+      streaming_edit_draft_ready: true, tm_draft_cloud_completed: '', tm_draft_cloud_entry_id: -1,
+      tm_draft_cloud_modified: 0, tm_draft_cloud_parent_entry_id: -1, tm_draft_cloud_space_id: -1,
+      tm_draft_cloud_user_id: -1, tm_draft_create: microTimestamp, tm_draft_modified: microTimestamp,
+      tm_draft_removed: 0, tm_duration: currentTime
+    };
+
+    rootMeta.all_draft_store.unshift(newDraftEntry);
+    rootMeta.draft_ids = (rootMeta.draft_ids || 0) + 1;
+    fs.writeFileSync(rootMetaPath, JSON.stringify(rootMeta));
+
+    return {
+      success: true,
+      path: projectPath,
+      name: projectName,
+      draftPath: draftPath,
+      projectCount: sourceProjects.length,
+      totalDuration: currentTime
+    };
+  } catch (error) {
+    console.error('Error merging projects:', error);
+    return { error: error.message };
+  }
+});
+
+// ========== DEBUG ANALYZE FUNCTION ==========
+// Debug function to see what's in a project
+ipcMain.handle('debug-analyze-project', async (_, { projectPath }) => {
+  console.log('\n=== ANALYZE PROJECT ===');
+  console.log('Path:', projectPath);
+
+  try {
+    const draftPath = path.join(projectPath, 'draft_content.json');
+    if (!fs.existsSync(draftPath)) {
+      return { error: 'Projeto não encontrado.' };
+    }
+
+    const content = JSON.parse(fs.readFileSync(draftPath, 'utf-8'));
+    const analysis = {
+      hasTexts: false,
+      textCount: 0,
+      texts: [],
+      hasDrafts: false,
+      draftCount: 0,
+      hasSubdrafts: false,
+      subdraftCount: 0
+    };
+
+    // Analyze main texts
+    if (content.materials?.texts?.length > 0) {
+      analysis.hasTexts = true;
+      analysis.textCount = content.materials.texts.length;
+      content.materials.texts.forEach((txt, idx) => {
+        const textInfo = {
+          index: idx,
+          hasContent: !!txt.content,
+          contentType: typeof txt.content,
+          contentPreview: txt.content?.substring(0, 200) || 'N/A',
+          isJson: false,
+          parsedKeys: []
+        };
+        if (txt.content) {
+          try {
+            const parsed = JSON.parse(txt.content);
+            textInfo.isJson = true;
+            textInfo.parsedKeys = Object.keys(parsed);
+            if (parsed.text) {
+              textInfo.textValue = parsed.text.substring(0, 100);
+            }
+          } catch (e) {
+            textInfo.isJson = false;
+          }
+        }
+        analysis.texts.push(textInfo);
+      });
+    }
+
+    // Analyze drafts (groups)
+    if (content.materials?.drafts?.length > 0) {
+      analysis.hasDrafts = true;
+      analysis.draftCount = content.materials.drafts.length;
+    }
+
+    // Analyze subdrafts
+    const subdraftFolder = path.join(projectPath, 'subdraft');
+    if (fs.existsSync(subdraftFolder)) {
+      const subdrafts = fs.readdirSync(subdraftFolder);
+      analysis.hasSubdrafts = true;
+      analysis.subdraftCount = subdrafts.length;
+    }
+
+    console.log('Analysis:', JSON.stringify(analysis, null, 2));
+    return { success: true, analysis };
+  } catch (error) {
+    console.error('Error analyzing project:', error);
+    return { error: error.message };
+  }
+});
+
+// ========== CLEAN SUBTITLES FUNCTION ==========
+// Fixes subtitle content that displays as JSON instead of plain text
+ipcMain.handle('clean-subtitles', async (_, { projectPath }) => {
+  console.log('\n=== CLEAN SUBTITLES CALLED ===');
+  console.log('Project path:', projectPath);
+
+  try {
+    const draftPath = path.join(projectPath, 'draft_content.json');
+    console.log('Draft path:', draftPath);
+
+    if (!fs.existsSync(draftPath)) {
+      console.log('ERROR: File not found');
+      return { error: 'Projeto não encontrado.' };
+    }
+
+    // Create backup
+    const backupPath = path.join(projectPath, `draft_content_backup_${Date.now()}.json`);
+    fs.copyFileSync(draftPath, backupPath);
+    console.log('Backup created:', backupPath);
+
+    const content = JSON.parse(fs.readFileSync(draftPath, 'utf-8'));
+    let cleanedCount = 0;
+    const logs = [];
+
+    // Process text materials
+    console.log('Checking materials.texts...');
+    console.log('texts exists?', !!content.materials?.texts);
+    console.log('texts length:', content.materials?.texts?.length || 0);
+
+    if (content.materials?.texts && content.materials.texts.length > 0) {
+      logs.push(`Encontrados ${content.materials.texts.length} textos`);
+
+      content.materials.texts = content.materials.texts.map((txt, idx) => {
+        console.log(`\n--- Processing text ${idx} ---`);
+        console.log('Content exists?', !!txt.content);
+        console.log('Content type:', typeof txt.content);
+        console.log('Content (first 150 chars):', txt.content?.substring(0, 150));
+
+        if (txt.content && typeof txt.content === 'string') {
+          try {
+            const parsed = JSON.parse(txt.content);
+            console.log('Parsed successfully, keys:', Object.keys(parsed));
+
+            // Check if it has the expected structure with text field
+            if (parsed.text !== undefined) {
+              const plainText = typeof parsed.text === 'string' ? parsed.text : String(parsed.text);
+              console.log('Text field found:', plainText.substring(0, 80));
+
+              // Check if the text itself is another JSON string (double wrapped)
+              let finalText = plainText;
+              let innerStyles = null;
+              try {
+                const innerParsed = JSON.parse(plainText);
+                if (innerParsed.text !== undefined) {
+                  finalText = innerParsed.text;
+                  innerStyles = innerParsed.styles; // Get styles from inner JSON if exists
+                  console.log('Double-wrapped! Inner text:', finalText.substring(0, 80));
+                }
+              } catch (e) {
+                // Not double wrapped, use as-is
+              }
+
+              // Create clean content PRESERVING STYLES
+              // Use inner styles if found, otherwise use outer styles
+              const stylesToKeep = innerStyles || parsed.styles;
+              const cleanedContent = {
+                styles: stylesToKeep,
+                text: finalText
+              };
+              // Copy any other properties from original (like check_flag, etc)
+              for (const key of Object.keys(parsed)) {
+                if (key !== 'styles' && key !== 'text') {
+                  cleanedContent[key] = parsed[key];
+                }
+              }
+              txt.content = JSON.stringify(cleanedContent);
+              cleanedCount++;
+              logs.push(`[${idx}] "${finalText.substring(0, 40)}..."`);
+              console.log(`CLEANED (with styles): "${finalText.substring(0, 50)}"`);
+            } else {
+              console.log('No text field in parsed content');
+              logs.push(`[${idx}] Sem campo text`);
+            }
+          } catch (e) {
+            console.log('Not JSON, keeping original:', e.message);
+            logs.push(`[${idx}] Não é JSON`);
+          }
+        } else {
+          console.log('No content or not string');
+        }
+        return txt;
+      });
+    } else {
+      logs.push('Nenhum texto em materials.texts');
+      console.log('No texts found in materials.texts');
+    }
+
+    // Also clean texts in subdrafts if they exist
+    const subdraftFolder = path.join(projectPath, 'subdraft');
+    if (fs.existsSync(subdraftFolder)) {
+      const subdrafts = fs.readdirSync(subdraftFolder);
+      for (const subdraftId of subdrafts) {
+        const subdraftDraftPath = path.join(subdraftFolder, subdraftId, 'draft_content.json');
+        if (fs.existsSync(subdraftDraftPath)) {
+          try {
+            const subdraftContent = JSON.parse(fs.readFileSync(subdraftDraftPath, 'utf-8'));
+            if (subdraftContent.materials?.texts) {
+              subdraftContent.materials.texts = subdraftContent.materials.texts.map(txt => {
+                if (txt.content && typeof txt.content === 'string') {
+                  try {
+                    const parsed = JSON.parse(txt.content);
+                    if (parsed.text !== undefined) {
+                      const plainText = typeof parsed.text === 'string' ? parsed.text : String(parsed.text);
+                      let finalText = plainText;
+                      let innerStyles = null;
+                      try {
+                        const innerParsed = JSON.parse(plainText);
+                        if (innerParsed.text !== undefined) {
+                          finalText = innerParsed.text;
+                          innerStyles = innerParsed.styles;
+                        }
+                      } catch (e) {}
+                      // PRESERVE STYLES
+                      const stylesToKeep = innerStyles || parsed.styles;
+                      const cleanedContent = { styles: stylesToKeep, text: finalText };
+                      for (const key of Object.keys(parsed)) {
+                        if (key !== 'styles' && key !== 'text') cleanedContent[key] = parsed[key];
+                      }
+                      txt.content = JSON.stringify(cleanedContent);
+                      cleanedCount++;
+                      console.log(`Cleaned subdraft text (with styles): "${finalText.substring(0, 50)}..."`);
+                    }
+                  } catch (e) {}
+                }
+                return txt;
+              });
+              fs.writeFileSync(subdraftDraftPath, JSON.stringify(subdraftContent));
+            }
+          } catch (e) {
+            console.error(`Error processing subdraft ${subdraftId}:`, e);
+          }
+        }
+      }
+    }
+
+    // Also update drafts array if it exists (for groups mode)
+    if (content.materials?.drafts) {
+      content.materials.drafts = content.materials.drafts.map(draft => {
+        if (draft.draft?.materials?.texts) {
+          draft.draft.materials.texts = draft.draft.materials.texts.map(txt => {
+            if (txt.content && typeof txt.content === 'string') {
+              try {
+                const parsed = JSON.parse(txt.content);
+                if (parsed.text !== undefined) {
+                  const plainText = typeof parsed.text === 'string' ? parsed.text : String(parsed.text);
+                  let finalText = plainText;
+                  let innerStyles = null;
+                  try {
+                    const innerParsed = JSON.parse(plainText);
+                    if (innerParsed.text !== undefined) {
+                      finalText = innerParsed.text;
+                      innerStyles = innerParsed.styles;
+                    }
+                  } catch (e) {}
+                  // PRESERVE STYLES
+                  const stylesToKeep = innerStyles || parsed.styles;
+                  const cleanedContent = { styles: stylesToKeep, text: finalText };
+                  for (const key of Object.keys(parsed)) {
+                    if (key !== 'styles' && key !== 'text') cleanedContent[key] = parsed[key];
+                  }
+                  txt.content = JSON.stringify(cleanedContent);
+                  cleanedCount++;
+                }
+              } catch (e) {}
+            }
+            return txt;
+          });
+        }
+        return draft;
+      });
+    }
+
+    fs.writeFileSync(draftPath, JSON.stringify(content));
+    console.log('\n=== CLEAN COMPLETE ===');
+    console.log('Cleaned count:', cleanedCount);
+    console.log('Logs:', logs);
+
+    return {
+      success: true,
+      cleanedCount,
+      backupPath,
+      logs,
+      message: cleanedCount > 0
+        ? `${cleanedCount} legendas limpas. Backup salvo.`
+        : 'Nenhuma legenda para limpar (0 textos encontrados)'
+    };
+  } catch (error) {
+    console.error('Error cleaning subtitles:', error);
+    return { error: error.message };
+  }
 });
 
 app.whenReady().then(() => {

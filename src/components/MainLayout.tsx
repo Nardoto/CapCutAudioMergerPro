@@ -1,6 +1,6 @@
 import { useState, useEffect, useRef } from 'react'
 import { motion, AnimatePresence } from 'framer-motion'
-import { Zap, RefreshCw, FileText, HelpCircle, LogOut, FolderOpen, ChevronRight, Minus, Square, X, Download, ExternalLink, User as UserIcon, Crown, Undo2, Search, Clock, ChevronDown, Trash2, Film, Plus, Pencil, Check, Copy, Cloud } from 'lucide-react'
+import { Zap, RefreshCw, FileText, HelpCircle, LogOut, FolderOpen, ChevronRight, Minus, Square, X, Download, ExternalLink, User as UserIcon, Crown, Undo2, Search, Clock, ChevronDown, Trash2, Film, Plus, Pencil, Check, Copy, Cloud, Layers } from 'lucide-react'
 import type { User, TrackInfo, LogEntry } from '../types'
 import capcutLogo from '../assets/capcut-logo.jpg'
 import TimelinePreview from './TimelinePreview'
@@ -8,6 +8,7 @@ import SyncPanel from './panels/SyncPanel'
 import LoopPanel from './panels/LoopPanel'
 import SrtPanel from './panels/SrtPanel'
 import MediaPanel from './panels/MediaPanel'
+import MergePanel from './panels/MergePanel'
 import HelpModal from './HelpModal'
 
 const { ipcRenderer } = window.require ? window.require('electron') : { ipcRenderer: null }
@@ -17,7 +18,7 @@ interface MainLayoutProps {
   onLogout: () => void
 }
 
-type TabType = 'sync' | 'loop' | 'srt' | 'media'
+type TabType = 'sync' | 'loop' | 'srt' | 'media' | 'merge'
 
 export default function MainLayout({ user, onLogout }: MainLayoutProps) {
   const [activeTab, setActiveTab] = useState<TabType>('sync')
@@ -73,6 +74,7 @@ export default function MainLayout({ user, onLogout }: MainLayoutProps) {
     { id: 'loop' as const, label: 'LOOP', icon: RefreshCw, hexColor: '#E85A2A' },     // Laranja (repetir)
     { id: 'srt' as const, label: '+ SRT', icon: FileText, hexColor: '#E85A2A' },      // Laranja (adicionar legenda)
     { id: 'media' as const, label: '+ MÍDIA', icon: Film, hexColor: '#E85A2A' },      // Laranja (adicionar mídia)
+    { id: 'merge' as const, label: 'MESCLAR', icon: Layers, hexColor: '#E85A2A' },    // Laranja (mesclar projetos)
   ]
 
   // Calcular dias restantes de trial
@@ -1120,6 +1122,20 @@ export default function MainLayout({ user, onLogout }: MainLayoutProps) {
                         onReanalyze={handleReanalyze}
                         selectedAudioTrack={selectedAudioTrack}
                         refTrackName={audioTracks.find(t => t.index === selectedAudioTrack)?.name}
+                      />
+                    </motion.div>
+                  )}
+                  {activeTab === 'merge' && (
+                    <motion.div
+                      key="merge"
+                      initial={{ opacity: 0, x: -10 }}
+                      animate={{ opacity: 1, x: 0 }}
+                      exit={{ opacity: 0, x: 10 }}
+                      className="h-full overflow-auto"
+                    >
+                      <MergePanel
+                        onLog={addLog}
+                        onProjectChange={handleReanalyze}
                       />
                     </motion.div>
                   )}
