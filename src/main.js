@@ -218,6 +218,31 @@ ipcMain.handle('select-folder', async () => {
   return { path: folderPath, name: path.basename(folderPath), draftPath: draftContentPath };
 });
 
+// Select root folder containing multiple projects (for merge)
+ipcMain.handle('select-projects-folder', async () => {
+  if (!mainWindow) return { canceled: true };
+  const settings = loadSettings();
+  const os = require('node:os');
+  const defaultPath = path.join(os.homedir(), 'AppData', 'Local', 'CapCut', 'User Data', 'Projects', 'com.lveditor.draft');
+
+  const result = await dialog.showOpenDialog(mainWindow, {
+    properties: ['openDirectory'],
+    title: 'Selecione a pasta raiz dos projetos CapCut',
+    defaultPath: settings.mergeProjectsPath || defaultPath,
+  });
+
+  if (result.canceled || result.filePaths.length === 0) {
+    return { canceled: true };
+  }
+
+  const folderPath = result.filePaths[0];
+
+  // Save for next time
+  saveSettings({ ...settings, mergeProjectsPath: folderPath });
+
+  return { canceled: false, filePath: folderPath };
+});
+
 ipcMain.handle('analyze-project', async (_, draftPath) => {
   try {
     const content = fs.readFileSync(draftPath, 'utf-8');

@@ -1136,6 +1136,7 @@ export default function MainLayout({ user, onLogout }: MainLayoutProps) {
                       <MergePanel
                         onLog={addLog}
                         onProjectChange={handleReanalyze}
+                        currentProjectPath={projectPath}
                       />
                     </motion.div>
                   )}

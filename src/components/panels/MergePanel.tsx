@@ -1,6 +1,6 @@
 import { useState, useEffect, useMemo } from 'react'
 import { motion, AnimatePresence } from 'framer-motion'
-import { Layers, FolderOpen, Check, ChevronUp, ChevronDown, Trash2, Play, Clock, AlertCircle, RefreshCw, Home, Sparkles } from 'lucide-react'
+import { Layers, FolderOpen, Check, ChevronUp, ChevronDown, Trash2, Play, Clock, AlertCircle, RefreshCw, Sparkles, Cloud } from 'lucide-react'
 import type { LogEntry } from '../../types'
 
 const { ipcRenderer } = window.require ? window.require('electron') : { ipcRenderer: null }
@@ -15,6 +15,7 @@ interface ProjectInfo {
 interface MergePanelProps {
   onLog: (type: LogEntry['type'], message: string) => void
   onProjectChange?: () => void
+  currentProjectPath?: string | null
 }
 
 // Format duration in MM:SS (CapCut uses microseconds: 1 second = 1,000,000)
@@ -37,7 +38,7 @@ const TIMELINE_COLORS = [
   '#EF4444', // Red
 ]
 
-export default function MergePanel({ onLog, onProjectChange }: MergePanelProps) {
+export default function MergePanel({ onLog, onProjectChange, currentProjectPath }: MergePanelProps) {
   const [projects, setProjects] = useState<ProjectInfo[]>([])
   const [selectedProjects, setSelectedProjects] = useState<ProjectInfo[]>([])
   const [outputName, setOutputName] = useState('')
@@ -45,25 +46,27 @@ export default function MergePanel({ onLog, onProjectChange }: MergePanelProps) 
   const [isMerging, setIsMerging] = useState(false)
   const [showSuccess, setShowSuccess] = useState(false)
   const [lastMergedName, setLastMergedName] = useState('')
-  const [customPath, setCustomPath] = useState<string | null>(null)
+  const [customPath, setCustomPath] = useState<string | null>(() => {
+    try { return localStorage.getItem('capcut_merge_custom_folder') } catch { return null }
+  })
   const [mergeMode, setMergeMode] = useState<'groups' | 'flat'>('flat') // 'groups' = composite clips, 'flat' = direct merge
   const [lastMergedPath, setLastMergedPath] = useState<string | null>(null)
   const [isCleaning, setIsCleaning] = useState(false)
-  const [debugPath, setDebugPath] = useState('')
-  const [debugLogs, setDebugLogs] = useState<string[]>([])
-  const [isAnalyzing, setIsAnalyzing] = useState(false)
+  const [projectSource, setProjectSource] = useState<'local' | 'custom'>('local')
+  const [customProjects, setCustomProjects] = useState<ProjectInfo[]>([])
 
-  // Load projects on mount
+  // Load local projects on mount
   useEffect(() => {
-    loadProjects()
+    loadLocalProjects()
   }, [])
 
-  const loadProjects = async (path?: string) => {
+  // Load local projects (default CapCut folder)
+  const loadLocalProjects = async () => {
     if (!ipcRenderer) return
     setIsLoading(true)
 
     try {
-      const result = await ipcRenderer.invoke('detect-capcut-folder', { customPath: path || customPath })
+      const result = await ipcRenderer.invoke('detect-capcut-folder', {})
       if (result.projects && Array.isArray(result.projects)) {
         const projectList: ProjectInfo[] = result.projects.map((p: { path: string; name: string; duration?: number }) => ({
           path: p.path,
@@ -74,30 +77,71 @@ export default function MergePanel({ onLog, onProjectChange }: MergePanelProps) 
         setProjects(projectList)
       }
     } catch (error) {
-      onLog('error', 'Erro ao carregar projetos')
+      onLog('error', 'Erro ao carregar projetos locais')
     } finally {
       setIsLoading(false)
     }
   }
 
-  const handleSelectFolder = async () => {
+  // Load custom folder projects
+  const loadCustomProjects = async (folderPath?: string) => {
+    if (!ipcRenderer) return
+    const targetPath = folderPath || customPath
+    if (!targetPath) return
+
+    setIsLoading(true)
+
+    try {
+      const result = await ipcRenderer.invoke('detect-capcut-folder', { customPath: targetPath })
+      if (result.projects && Array.isArray(result.projects)) {
+        const projectList: ProjectInfo[] = result.projects.map((p: { path: string; name: string; duration?: number }) => ({
+          path: p.path,
+          name: p.name,
+          duration: p.duration || 0,
+          selected: false
+        }))
+        setCustomProjects(projectList)
+      } else if (result.error) {
+        onLog('error', result.error)
+        setCustomProjects([])
+      }
+    } catch (error) {
+      onLog('error', 'Erro ao carregar projetos da pasta')
+      setCustomProjects([])
+    } finally {
+      setIsLoading(false)
+    }
+  }
+
+  // Select custom folder
+  const handleSelectCustomFolder = async () => {
     if (!ipcRenderer) return
     try {
-      const result = await ipcRenderer.invoke('select-folder')
-      if (result && !result.canceled && result.filePath) {
-        setCustomPath(result.filePath)
-        loadProjects(result.filePath)
-        onLog('info', `Pasta alterada para: ${result.filePath}`)
+      const result = await ipcRenderer.invoke('select-cloud-folder')
+      if (result.error) {
+        onLog('error', result.error)
+        return
+      }
+      if (result.canceled) return
+
+      if (result.folderPath) {
+        setCustomPath(result.folderPath)
+        try { localStorage.setItem('capcut_merge_custom_folder', result.folderPath) } catch {}
+        loadCustomProjects(result.folderPath)
+        onLog('info', `Pasta selecionada: ${result.folderPath}`)
       }
     } catch (error) {
       onLog('error', 'Erro ao selecionar pasta')
     }
   }
 
-  const handleResetFolder = () => {
-    setCustomPath(null)
-    loadProjects(undefined)
-    onLog('info', 'Voltando para pasta padrão do CapCut')
+  // Refresh current source
+  const handleRefresh = () => {
+    if (projectSource === 'local') {
+      loadLocalProjects()
+    } else {
+      loadCustomProjects()
+    }
   }
 
   const toggleProjectSelection = (project: ProjectInfo) => {
@@ -151,7 +195,7 @@ export default function MergePanel({ onLog, onProjectChange }: MergePanelProps) 
         setShowSuccess(true)
         setSelectedProjects([])
         setOutputName('')
-        loadProjects() // Refresh list
+        handleRefresh() // Refresh list
         onProjectChange?.()
 
         // Hide success after 5 seconds
@@ -164,15 +208,16 @@ export default function MergePanel({ onLog, onProjectChange }: MergePanelProps) 
     }
   }
 
-  const availableProjects = projects.filter(p => !selectedProjects.some(sp => sp.path === p.path))
+  // Get projects based on current source
+  const currentProjects = projectSource === 'local' ? projects : customProjects
+  const availableProjects = currentProjects.filter(p => !selectedProjects.some(sp => sp.path === p.path))
 
   const handleCleanSubtitles = async (pathToClean?: string) => {
     const targetPath = pathToClean || lastMergedPath
     if (!targetPath || !ipcRenderer) return
 
     setIsCleaning(true)
-    onLog('info', `Limpando legendas em: ${targetPath}`)
-    setDebugLogs(prev => [...prev, `Limpando: ${targetPath}`])
+    onLog('info', `Limpando legendas...`)
 
     try {
       const result = await ipcRenderer.invoke('clean-subtitles', {
@@ -181,47 +226,13 @@ export default function MergePanel({ onLog, onProjectChange }: MergePanelProps) 
 
       if (result.error) {
         onLog('error', result.error)
-        setDebugLogs(prev => [...prev, `ERRO: ${result.error}`])
       } else {
         onLog('success', result.message)
-        setDebugLogs(prev => [...prev, `OK: ${result.message}`, ...(result.logs || [])])
       }
     } catch (error) {
       onLog('error', 'Erro ao limpar legendas')
-      setDebugLogs(prev => [...prev, `EXCEPTION: ${error}`])
     } finally {
       setIsCleaning(false)
-    }
-  }
-
-  const handleAnalyzeProject = async () => {
-    if (!debugPath || !ipcRenderer) return
-
-    setIsAnalyzing(true)
-    setDebugLogs(prev => [...prev, `Analisando: ${debugPath}`])
-
-    try {
-      const result = await ipcRenderer.invoke('debug-analyze-project', {
-        projectPath: debugPath
-      })
-
-      if (result.error) {
-        setDebugLogs(prev => [...prev, `ERRO: ${result.error}`])
-      } else {
-        const a = result.analysis
-        setDebugLogs(prev => [
-          ...prev,
-          `=== ANÁLISE ===`,
-          `Textos: ${a.textCount}`,
-          `Drafts: ${a.draftCount}`,
-          `Subdrafts: ${a.subdraftCount}`,
-          ...a.texts.map((t: any) => `[${t.index}] ${t.isJson ? 'JSON' : 'texto'}: ${t.contentPreview?.substring(0, 80)}...`)
-        ])
-      }
-    } catch (error) {
-      setDebugLogs(prev => [...prev, `EXCEPTION: ${error}`])
-    } finally {
-      setIsAnalyzing(false)
     }
   }
 
@@ -252,38 +263,97 @@ export default function MergePanel({ onLog, onProjectChange }: MergePanelProps) 
           <Layers className="w-5 h-5 text-primary" />
           <span className="text-sm font-medium text-white">Mesclar Projetos</span>
         </div>
-        <div className="flex items-center gap-2">
-          {customPath && (
-            <button
-              onClick={handleResetFolder}
-              className="p-1 text-text-muted hover:text-primary transition-colors"
-              title="Voltar para pasta padrão"
-            >
-              <Home className="w-4 h-4" />
-            </button>
-          )}
-          <button
-            onClick={handleSelectFolder}
-            className="p-1 text-text-muted hover:text-primary transition-colors"
-            title="Selecionar outra pasta"
-          >
-            <FolderOpen className="w-4 h-4" />
-          </button>
-          <button
-            onClick={() => loadProjects()}
-            disabled={isLoading}
-            className="p-1 text-text-muted hover:text-primary transition-colors disabled:opacity-50"
-            title="Atualizar lista"
-          >
-            <RefreshCw className={`w-4 h-4 ${isLoading ? 'animate-spin' : ''}`} />
-          </button>
-        </div>
+        <button
+          onClick={handleRefresh}
+          disabled={isLoading}
+          className="p-1 text-text-muted hover:text-primary transition-colors disabled:opacity-50"
+          title="Atualizar lista"
+        >
+          <RefreshCw className={`w-4 h-4 ${isLoading ? 'animate-spin' : ''}`} />
+        </button>
       </div>
 
-      {/* Custom path indicator */}
-      {customPath && (
-        <div className="text-[10px] text-text-muted truncate px-1" title={customPath}>
-          📁 {customPath}
+      {/* Toggle Local / Outra Pasta */}
+      <div className="flex rounded-lg bg-white/5 p-0.5">
+        <button
+          onClick={() => setProjectSource('local')}
+          className={`flex-1 py-1.5 px-2 rounded-md text-[10px] font-medium transition-all flex items-center justify-center gap-1 ${
+            projectSource === 'local'
+              ? 'bg-primary text-white'
+              : 'text-text-muted hover:text-white'
+          }`}
+        >
+          <FolderOpen className="w-3 h-3" />
+          Local
+        </button>
+        <button
+          onClick={() => {
+            setProjectSource('custom')
+            if (customPath && customProjects.length === 0) {
+              loadCustomProjects()
+            }
+          }}
+          className={`flex-1 py-1.5 px-2 rounded-md text-[10px] font-medium transition-all flex items-center justify-center gap-1 ${
+            projectSource === 'custom'
+              ? 'bg-primary text-white'
+              : 'text-text-muted hover:text-white'
+          }`}
+        >
+          <Cloud className="w-3 h-3" />
+          Outra Pasta
+        </button>
+      </div>
+
+      {/* Custom folder selector */}
+      {projectSource === 'custom' && (
+        <div className="flex items-center justify-between p-2 rounded-lg bg-white/5">
+          <span className="text-[10px] text-text-muted truncate flex-1" title={customPath || undefined}>
+            {customPath ? customPath.split(/[/\\]/).pop() : 'Nenhuma pasta selecionada'}
+          </span>
+          <button
+            onClick={handleSelectCustomFolder}
+            className="text-[10px] text-primary hover:text-primary/80 flex items-center gap-1 ml-2"
+            title="Selecionar pasta"
+          >
+            <FolderOpen className="w-3 h-3" />
+            {customPath ? 'Alterar' : 'Selecionar'}
+          </button>
+        </div>
+      )}
+
+      {/* Clean subtitles button - when project is open */}
+      {currentProjectPath && !showSuccess && (
+        <div className="p-3 rounded-xl bg-yellow-500/10 border border-yellow-500/30 space-y-3">
+          <div className="space-y-1">
+            <div className="flex items-center gap-2">
+              <Sparkles className="w-4 h-4 text-yellow-400" />
+              <span className="text-xs font-medium text-yellow-400">
+                Correção de Legendas
+              </span>
+            </div>
+            <p className="text-[10px] text-text-muted leading-relaxed">
+              Use após mesclar projetos com legendas. Primeiro abra o projeto mesclado no CapCut
+              (para ele processar os arquivos), feche o CapCut, e então clique no botão abaixo
+              para corrigir as legendas que aparecem como JSON.
+            </p>
+          </div>
+          <button
+            onClick={() => handleCleanSubtitles(currentProjectPath)}
+            disabled={isCleaning}
+            className="w-full py-2 px-3 rounded-lg bg-yellow-500/20 text-xs text-yellow-400 hover:bg-yellow-500/30 transition-colors flex items-center justify-center gap-2 disabled:opacity-50 font-medium"
+          >
+            {isCleaning ? (
+              <>
+                <span className="w-3 h-3 border-2 border-yellow-400/30 border-t-yellow-400 rounded-full animate-spin" />
+                Corrigindo legendas...
+              </>
+            ) : (
+              <>
+                <Sparkles className="w-3 h-3" />
+                Corrigir Legendas do Projeto
+              </>
+            )}
+          </button>
         </div>
       )}
 
@@ -302,25 +372,9 @@ export default function MergePanel({ onLog, onProjectChange }: MergePanelProps) 
                 Projeto "{lastMergedName}" criado com sucesso!
               </span>
             </div>
-            {lastMergedPath && (
-              <button
-                onClick={() => handleCleanSubtitles()}
-                disabled={isCleaning}
-                className="w-full py-2 px-3 rounded-lg bg-white/10 text-xs text-white hover:bg-white/20 transition-colors flex items-center justify-center gap-2 disabled:opacity-50"
-              >
-                {isCleaning ? (
-                  <>
-                    <span className="w-3 h-3 border-2 border-white/30 border-t-white rounded-full animate-spin" />
-                    Limpando...
-                  </>
-                ) : (
-                  <>
-                    <Sparkles className="w-3 h-3" />
-                    Limpar Legendas (se bugadas)
-                  </>
-                )}
-              </button>
-            )}
+            <p className="text-[10px] text-green-300/70">
+              Abra no CapCut, feche, e depois corrija as legendas na aba MESCLAR.
+            </p>
           </motion.div>
         )}
       </AnimatePresence>
@@ -428,9 +482,21 @@ export default function MergePanel({ onLog, onProjectChange }: MergePanelProps) 
             <div className="flex items-center justify-center py-4">
               <span className="w-4 h-4 border-2 border-primary/30 border-t-primary rounded-full animate-spin" />
             </div>
+          ) : projectSource === 'custom' && !customPath ? (
+            <div className="text-center py-6">
+              <Cloud className="w-8 h-8 text-primary mx-auto mb-2 opacity-30" />
+              <p className="text-xs text-text-muted">Selecione uma pasta</p>
+              <p className="text-[10px] text-text-muted">para ver os projetos</p>
+              <button
+                onClick={handleSelectCustomFolder}
+                className="mt-3 text-[10px] px-3 py-1.5 bg-primary/20 text-primary rounded-lg hover:bg-primary/30 transition-colors"
+              >
+                Selecionar pasta
+              </button>
+            </div>
           ) : availableProjects.length === 0 ? (
             <div className="flex items-center justify-center py-4 text-xs text-text-muted">
-              {projects.length === 0 ? 'Nenhum projeto encontrado' : 'Todos os projetos selecionados'}
+              {currentProjects.length === 0 ? 'Nenhum projeto encontrado' : 'Todos os projetos selecionados'}
             </div>
           ) : (
             availableProjects.map((project) => (
@@ -530,57 +596,6 @@ export default function MergePanel({ onLog, onProjectChange }: MergePanelProps) 
       <p className="text-[10px] text-text-muted text-center">
         Cada projeto será convertido em um grupo (Clipe Composto) no projeto final
       </p>
-
-      {/* Debug Section */}
-      <div className="mt-6 pt-4 border-t border-border space-y-3">
-        <label className="text-xs font-medium text-yellow-500 flex items-center gap-2">
-          🔧 DEBUG - LIMPAR LEGENDAS
-        </label>
-
-        <div className="space-y-2">
-          <input
-            type="text"
-            value={debugPath}
-            onChange={(e) => setDebugPath(e.target.value)}
-            placeholder="Cole o caminho do projeto aqui..."
-            className="input w-full text-xs font-mono"
-          />
-
-          <div className="flex gap-2">
-            <button
-              onClick={handleAnalyzeProject}
-              disabled={!debugPath || isAnalyzing}
-              className="flex-1 py-2 px-3 rounded-lg bg-yellow-500/20 text-yellow-400 text-xs hover:bg-yellow-500/30 disabled:opacity-50 transition-colors"
-            >
-              {isAnalyzing ? 'Analisando...' : 'Analisar'}
-            </button>
-            <button
-              onClick={() => handleCleanSubtitles(debugPath)}
-              disabled={!debugPath || isCleaning}
-              className="flex-1 py-2 px-3 rounded-lg bg-green-500/20 text-green-400 text-xs hover:bg-green-500/30 disabled:opacity-50 transition-colors"
-            >
-              {isCleaning ? 'Limpando...' : 'Limpar'}
-            </button>
-            <button
-              onClick={() => setDebugLogs([])}
-              className="py-2 px-3 rounded-lg bg-red-500/20 text-red-400 text-xs hover:bg-red-500/30 transition-colors"
-            >
-              Limpar Log
-            </button>
-          </div>
-        </div>
-
-        {/* Debug logs */}
-        {debugLogs.length > 0 && (
-          <div className="p-2 rounded-lg bg-black/50 max-h-40 overflow-y-auto">
-            {debugLogs.map((log, idx) => (
-              <div key={idx} className="text-[10px] font-mono text-gray-300 py-0.5">
-                {log}
-              </div>
-            ))}
-          </div>
-        )}
-      </div>
     </div>
   )
 }
