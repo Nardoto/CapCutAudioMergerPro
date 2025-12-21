@@ -51,6 +51,8 @@ export default function LoopPanel({
       } else {
         result.logs?.forEach((log: string) => onLog('info', log))
         onLog('success', `Midias repetidas! ${result.stats.newCount} blocos em ${result.stats.cycles} ciclos`)
+        // Save backup description
+        await ipcRenderer.invoke('save-backup-description', { draftPath, description: 'Loop mídia' })
         onReanalyze?.()
       }
     } catch (error) {
@@ -91,6 +93,8 @@ export default function LoopPanel({
       } else {
         result.logs?.forEach((log: string) => onLog('info', log))
         onLog('success', 'Trilha repetida! ' + result.stats.newCount + ' blocos criados em ' + result.stats.cycles + ' ciclos')
+        // Save backup description
+        await ipcRenderer.invoke('save-backup-description', { draftPath, description: 'Loop trilha' })
         onReanalyze?.()
       }
     } catch (error) {
@@ -120,6 +124,8 @@ export default function LoopPanel({
       } else {
         result.logs?.forEach((log: string) => onLog('info', log))
         onLog('success', `Midias randomizadas! ${result.stats?.totalMedia || 0} segmentos reordenados`)
+        // Save backup description
+        await ipcRenderer.invoke('save-backup-description', { draftPath, description: 'Randomizado' })
         onReanalyze?.()
       }
     } catch (error) {
@@ -133,8 +139,8 @@ export default function LoopPanel({
     <div className="p-4 space-y-4">
       {/* Header */}
       <div className="flex items-center gap-3">
-        <div className="w-10 h-10 rounded-xl flex items-center justify-center" style={{ backgroundColor: loopType === 'video_image' ? '#175d6230' : '#0e305830' }}>
-          <RefreshCw className="w-5 h-5" style={{ color: loopType === 'video_image' ? '#175d62' : '#0e3058' }} />
+        <div className="w-10 h-10 rounded-xl flex items-center justify-center bg-gradient-to-br from-primary/40 to-primary/10">
+          <RefreshCw className="w-5 h-5 text-primary" />
         </div>
         <div>
           <h2 className="text-lg font-semibold text-white">Repeticao (Loop)</h2>
@@ -148,10 +154,9 @@ export default function LoopPanel({
           onClick={() => setLoopType('video_image')}
           className={`py-2.5 px-4 rounded-lg font-medium transition-all flex items-center justify-center gap-2 ${
             loopType === 'video_image'
-              ? 'text-white'
+              ? 'bg-primary text-white'
               : 'bg-gray-700 text-gray-300 hover:bg-gray-600'
           }`}
-          style={loopType === 'video_image' ? { backgroundColor: '#175d62' } : {}}
         >
           <Film className="w-4 h-4" />
           Video/Imagem
@@ -160,10 +165,9 @@ export default function LoopPanel({
           onClick={() => setLoopType('audio')}
           className={`py-2.5 px-4 rounded-lg font-medium transition-all flex items-center justify-center gap-2 ${
             loopType === 'audio'
-              ? 'text-white'
+              ? 'bg-primary text-white'
               : 'bg-gray-700 text-gray-300 hover:bg-gray-600'
           }`}
-          style={loopType === 'audio' ? { backgroundColor: '#0e3058' } : {}}
         >
           <Music className="w-4 h-4" />
           Audio
@@ -197,10 +201,9 @@ export default function LoopPanel({
               onClick={() => setOrder('sequential')}
               className={`p-3 rounded-xl border transition-all flex items-center gap-3 ${
                 order === 'sequential'
-                  ? 'text-white'
+                  ? 'text-white border-primary bg-primary/20'
                   : 'border-border-light text-text-secondary hover:border-border-lighter'
               }`}
-              style={order === 'sequential' ? { borderColor: '#175d62', backgroundColor: '#175d6230' } : {}}
             >
               <ListOrdered className="w-5 h-5" />
               <span className="text-sm font-medium">Sequencial</span>
@@ -209,10 +212,9 @@ export default function LoopPanel({
               onClick={() => setOrder('random')}
               className={`p-3 rounded-xl border transition-all flex items-center gap-3 ${
                 order === 'random'
-                  ? 'text-white'
+                  ? 'text-white border-primary bg-primary/20'
                   : 'border-border-light text-text-secondary hover:border-border-lighter'
               }`}
-              style={order === 'random' ? { borderColor: '#175d62', backgroundColor: '#175d6230' } : {}}
             >
               <Shuffle className="w-5 h-5" />
               <span className="text-sm font-medium">Aleatorio</span>
@@ -224,8 +226,7 @@ export default function LoopPanel({
             <button
               onClick={handleLoopMedia}
               disabled={!hasProject || isProcessingVideo}
-              className="py-3 px-4 text-white font-semibold rounded-xl transition-all disabled:opacity-50 disabled:cursor-not-allowed flex items-center justify-center gap-2 hover:brightness-110"
-              style={{ backgroundColor: '#175d62' }}
+              className="py-3 px-4 bg-primary text-white font-semibold rounded-xl transition-all disabled:opacity-50 disabled:cursor-not-allowed flex items-center justify-center gap-2 hover:brightness-110"
             >
               {isProcessingVideo ? (
                 <>
@@ -243,8 +244,7 @@ export default function LoopPanel({
             <button
               onClick={handleRandomizeMedia}
               disabled={!hasProject || isRandomizing}
-              className="py-3 px-4 text-white font-semibold rounded-xl transition-all disabled:opacity-50 disabled:cursor-not-allowed flex items-center justify-center gap-2 hover:brightness-110"
-              style={{ backgroundColor: '#e67e22' }}
+              className="py-3 px-4 bg-primary text-white font-semibold rounded-xl transition-all disabled:opacity-50 disabled:cursor-not-allowed flex items-center justify-center gap-2 hover:brightness-110"
             >
               {isRandomizing ? (
                 <>
@@ -265,25 +265,18 @@ export default function LoopPanel({
           {/* Track de REFERÊNCIA - azul com brilho */}
           <div className="space-y-2">
             <div className="flex items-center gap-2">
-              <div className="w-3 h-3 rounded-full" style={{ backgroundColor: '#0e3058', boxShadow: '0 0 8px #0e3058' }} />
+              <div className="w-3 h-3 rounded-full bg-primary shadow-[0_0_8px] shadow-primary" />
               <span className="text-sm font-semibold text-white">REFERÊNCIA (duração alvo)</span>
             </div>
             {refAudioTrack ? (
-              <div
-                className="p-3 rounded-xl border-2 transition-all"
-                style={{
-                  borderColor: '#0e3058',
-                  backgroundColor: '#0e305840',
-                  boxShadow: '0 0 12px #0e305880'
-                }}
-              >
+              <div className="p-3 rounded-xl border-2 transition-all border-primary bg-primary/20 shadow-[0_0_12px] shadow-primary/50">
                 <div className="flex items-center gap-3">
-                  <Music className="w-5 h-5" style={{ color: '#0e3058' }} />
+                  <Music className="w-5 h-5 text-primary" />
                   <div className="flex-1">
                     <p className="text-white font-medium">Track {refAudioTrack.index}: {refAudioTrack.name || 'Sem nome'}</p>
                     <p className="text-xs text-text-secondary">{refAudioTrack.durationSec.toFixed(1)}s • {refAudioTrack.segments} segmentos</p>
                   </div>
-                  <span className="text-xs px-2 py-1 rounded-full" style={{ backgroundColor: '#0e3058', color: '#fff' }}>
+                  <span className="text-xs px-2 py-1 rounded-full bg-primary text-white">
                     Referência
                   </span>
                 </div>
@@ -296,7 +289,7 @@ export default function LoopPanel({
           {/* Track para COPIAR - laranja quando selecionado */}
           <div className="space-y-2">
             <div className="flex items-center gap-2">
-              <div className="w-3 h-3 rounded-full" style={{ backgroundColor: '#e67e22' }} />
+              <div className="w-3 h-3 rounded-full bg-primary" />
               <span className="text-sm font-semibold text-white">COPIAR (será repetida)</span>
             </div>
             <div className="space-y-2">
@@ -310,16 +303,13 @@ export default function LoopPanel({
                       key={track.index}
                       onClick={() => setAudioToLoop(track.index)}
                       className={`w-full p-3 rounded-xl border-2 transition-all text-left ${
-                        audioToLoop === track.index ? 'text-white' : 'border-border-light hover:border-orange-500/50'
+                        audioToLoop === track.index
+                          ? 'text-white border-primary bg-primary/20 shadow-[0_0_8px] shadow-primary/40'
+                          : 'border-border-light hover:border-primary/50'
                       }`}
-                      style={audioToLoop === track.index ? {
-                        borderColor: '#e67e22',
-                        backgroundColor: '#e67e2230',
-                        boxShadow: '0 0 8px #e67e2260'
-                      } : {}}
                     >
                       <div className="flex items-center gap-3">
-                        <Music className="w-5 h-5" style={{ color: audioToLoop === track.index ? '#e67e22' : '#666' }} />
+                        <Music className={`w-5 h-5 ${audioToLoop === track.index ? 'text-primary' : 'text-text-muted'}`} />
                         <div className="flex-1">
                           <p className={audioToLoop === track.index ? 'text-white font-medium' : 'text-text-secondary'}>
                             Track {track.index}: {track.name || 'Sem nome'}
@@ -327,7 +317,7 @@ export default function LoopPanel({
                           <p className="text-xs text-text-muted">{track.durationSec.toFixed(1)}s • {track.segments} segmentos</p>
                         </div>
                         {audioToLoop === track.index && (
-                          <span className="text-xs px-2 py-1 rounded-full" style={{ backgroundColor: '#e67e22', color: '#fff' }}>
+                          <span className="text-xs px-2 py-1 rounded-full bg-primary text-white">
                             Copiar
                           </span>
                         )}
@@ -341,8 +331,7 @@ export default function LoopPanel({
           <button
             onClick={handleLoopAudio}
             disabled={audioToLoop < 0 || isProcessingAudio || !hasProject}
-            className="w-full py-3 px-4 text-white font-semibold rounded-xl transition-all disabled:opacity-50 disabled:cursor-not-allowed flex items-center justify-center gap-2 hover:brightness-110"
-            style={{ backgroundColor: '#e67e22' }}
+            className="w-full py-3 px-4 bg-primary text-white font-semibold rounded-xl transition-all disabled:opacity-50 disabled:cursor-not-allowed flex items-center justify-center gap-2 hover:brightness-110"
           >
             {isProcessingAudio ? (
               <>

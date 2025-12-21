@@ -1,5 +1,5 @@
-import { useMemo, useState } from 'react'
-import { X, Trash2 } from 'lucide-react'
+import { useMemo } from 'react'
+import { Trash2 } from 'lucide-react'
 import type { TrackInfo } from '../types'
 
 interface TimelinePreviewProps {
@@ -39,8 +39,6 @@ interface EnrichedSegment {
 }
 
 export default function TimelinePreview({ tracks, selectedAudioTrack, onTrackClick, onDeleteTrack }: TimelinePreviewProps) {
-  const [hoveredTrack, setHoveredTrack] = useState<number | null>(null)
-  const [confirmDelete, setConfirmDelete] = useState<number | null>(null)
 
   const sortedTracks = useMemo(() => {
     const order = ['filter', 'effect', 'sticker', 'text', 'subtitle', 'video', 'audio']
@@ -81,53 +79,22 @@ export default function TimelinePreview({ tracks, selectedAudioTrack, onTrackCli
 
           const isClickable = track.type === 'audio' && onTrackClick
 
-          const isHovered = hoveredTrack === track.index
-          const isConfirming = confirmDelete === track.index
-
           return (
             <div
               key={track.index}
-              className={`flex items-center gap-2 py-0.5 rounded-lg transition-all ${isClickable ? 'cursor-pointer' : ''} ${isHovered ? 'bg-white/10' : 'hover:bg-white/5'}`}
+              className={`flex items-center gap-2 py-0.5 rounded-lg transition-all group ${isClickable ? 'cursor-pointer' : ''} hover:bg-white/5`}
               onClick={() => isClickable && onTrackClick(track.index, track.type)}
-              onMouseEnter={() => setHoveredTrack(track.index)}
-              onMouseLeave={() => { setHoveredTrack(null); setConfirmDelete(null) }}
               title={isClickable ? 'Clique para selecionar como referência' : undefined}
             >
-              {/* Track label with delete option */}
-              <div className="w-20 text-right pr-1 flex-shrink-0 relative">
-                {isConfirming ? (
-                  <div className="flex items-center gap-1 justify-end">
-                    <button
-                      onClick={(e) => { e.stopPropagation(); onDeleteTrack?.(track.index); setConfirmDelete(null) }}
-                      className="p-0.5 bg-red-500 hover:bg-red-600 rounded text-white transition-colors"
-                      title="Confirmar exclusão"
-                    >
-                      <Trash2 className="w-3 h-3" />
-                    </button>
-                    <button
-                      onClick={(e) => { e.stopPropagation(); setConfirmDelete(null) }}
-                      className="p-0.5 bg-white/20 hover:bg-white/30 rounded text-white transition-colors"
-                      title="Cancelar"
-                    >
-                      <X className="w-3 h-3" />
-                    </button>
-                  </div>
-                ) : isHovered && onDeleteTrack ? (
-                  <button
-                    onClick={(e) => { e.stopPropagation(); setConfirmDelete(track.index) }}
-                    className="absolute right-1 top-1/2 -translate-y-1/2 p-0.5 bg-red-500/20 hover:bg-red-500/40 rounded text-red-400 transition-colors"
-                    title="Apagar track"
-                  >
-                    <Trash2 className="w-3 h-3" />
-                  </button>
-                ) : null}
-                <span className={`text-[9px] text-text-muted truncate block ${isHovered && onDeleteTrack && !isConfirming ? 'opacity-0' : ''}`} title={track.name || trackLabels[track.type]}>
+              {/* Track label */}
+              <div className="w-20 text-right pr-1 flex-shrink-0 h-4 flex items-center justify-end">
+                <span className="text-[9px] text-text-muted truncate block" title={track.name || trackLabels[track.type]}>
                   {(track.name || trackLabels[track.type]).substring(0, 12)}
                 </span>
               </div>
 
               {/* Track bar - show ALL segments for ALL types */}
-              <div className="flex-1 h-4 bg-white/5 rounded relative overflow-hidden">
+              <div className={`flex-1 h-4 bg-white/5 rounded relative overflow-hidden group/bar ${isSelected ? 'ring-2 ring-primary shadow-[0_0_12px] shadow-primary/50' : ''}`}>
                 {segments.length > 0 ? (
                   <div className="absolute inset-0">
                     {segments.map((seg, idx) => {
@@ -153,12 +120,12 @@ export default function TimelinePreview({ tracks, selectedAudioTrack, onTrackCli
                       return (
                         <div
                           key={seg.id || idx}
-                          className={`absolute h-full flex items-center overflow-hidden ${isSelected ? 'ring-1 ring-white/50' : ''}`}
+                          className="absolute h-full flex items-center overflow-hidden"
                           style={{
                             left: `${left}%`,
                             width: `${Math.max(width, 0.3)}%`,
                             backgroundColor: color,
-                            opacity: isSelected ? 1 : 0.85,
+                            opacity: 1,
                             borderRight: '1px solid rgba(0,0,0,0.3)',
                           }}
                           title={displayText || `Segmento ${idx + 1}`}
@@ -175,18 +142,28 @@ export default function TimelinePreview({ tracks, selectedAudioTrack, onTrackCli
                 ) : (
                   // Fallback: solid bar if no segments data
                   <div
-                    className={`h-full rounded ${isSelected ? 'ring-1 ring-white/50' : ''}`}
+                    className="h-full rounded"
                     style={{
                       width: `${(track.duration / maxDuration) * 100}%`,
                       backgroundColor: color,
-                      opacity: isSelected ? 1 : 0.7,
+                      opacity: 1,
                     }}
                   />
                 )}
                 {isSelected && (
-                  <div className="absolute inset-0 flex items-center justify-end pr-1 pointer-events-none">
-                    <span className="text-[8px] font-bold text-white bg-black/40 px-1 rounded">REF</span>
+                  <div className="absolute inset-0 flex items-center justify-end pr-6 pointer-events-none">
+                    <span className="text-[9px] font-bold text-white bg-primary px-1.5 py-0.5 rounded shadow-lg border border-white/30">REF</span>
                   </div>
+                )}
+                {/* Delete button on bar */}
+                {onDeleteTrack && (
+                  <button
+                    onClick={(e) => { e.stopPropagation(); onDeleteTrack(track.index) }}
+                    className="absolute right-0.5 top-1/2 -translate-y-1/2 p-0.5 bg-red-500/80 hover:bg-red-500 rounded text-white transition-all opacity-0 group-hover:opacity-100 z-20"
+                    title="Apagar track"
+                  >
+                    <Trash2 className="w-3 h-3" />
+                  </button>
                 )}
               </div>
 

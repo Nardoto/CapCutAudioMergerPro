@@ -1,7 +1,7 @@
 {
   "name": "capcut-sync-pro",
   "productName": "CapCut Sync Pro",
-  "version": "2.0.0",
+  "version": "3.1.0",
   "description": "Sincronize mídias e legendas no CapCut automaticamente",
   "main": ".webpack/main",
   "scripts": {

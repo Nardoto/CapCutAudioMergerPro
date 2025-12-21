@@ -56,6 +56,8 @@ export default function SyncPanel({
       } else {
         result.logs?.forEach((log) => onLog('info', log))
         onLog('success', 'Sincronização concluída! ' + result.stats.gapsRemoved + ' gaps removidos, ' + result.stats.mediaModified + ' mídias ajustadas')
+        // Save backup description
+        await ipcRenderer.invoke('save-backup-description', { draftPath, description: 'Sync realizado' })
         onReanalyze?.()
       }
     } catch (error) {
@@ -71,7 +73,7 @@ export default function SyncPanel({
     <div className="p-4 space-y-6">
       {/* Header */}
       <div className="flex items-center gap-3">
-        <div className="w-10 h-10 rounded-xl bg-green-500/20 flex items-center justify-center">
+        <div className="w-10 h-10 rounded-xl bg-gradient-to-br from-green-500/30 to-green-500/10 flex items-center justify-center">
           <Zap className="w-5 h-5 text-green-400" />
         </div>
         <div>

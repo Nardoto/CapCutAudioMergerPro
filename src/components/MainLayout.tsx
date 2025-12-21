@@ -1,7 +1,8 @@
 import { useState, useEffect, useRef } from 'react'
 import { motion, AnimatePresence } from 'framer-motion'
-import { Zap, RefreshCw, FileText, HelpCircle, LogOut, FolderOpen, ChevronRight, Minus, Square, X, Download, ExternalLink, User as UserIcon, Crown, Undo2, Search, Clock, ChevronDown, Trash2, Film, Plus, Pencil, Check, Copy } from 'lucide-react'
+import { Zap, RefreshCw, FileText, HelpCircle, LogOut, FolderOpen, ChevronRight, Minus, Square, X, Download, ExternalLink, User as UserIcon, Crown, Undo2, Search, Clock, ChevronDown, Trash2, Film, Plus, Pencil, Check, Copy, Cloud } from 'lucide-react'
 import type { User, TrackInfo, LogEntry } from '../types'
+import capcutLogo from '../assets/capcut-logo.jpg'
 import TimelinePreview from './TimelinePreview'
 import SyncPanel from './panels/SyncPanel'
 import LoopPanel from './panels/LoopPanel'
@@ -33,7 +34,7 @@ export default function MainLayout({ user, onLogout }: MainLayoutProps) {
   const [showProjectPicker, setShowProjectPicker] = useState(false)
   const [capCutProjects, setCapCutProjects] = useState<Array<{ name: string; path: string; draftPath: string; modifiedAt: string }>>([])
   const [showBackupDropdown, setShowBackupDropdown] = useState(false)
-  const [backups, setBackups] = useState<Array<{ filename: string; displayDate: string; timestamp: number }>>([])
+  const [backups, setBackups] = useState<Array<{ filename: string; displayDate: string; timestamp: number; description?: string | null }>>([])
   const [backupCount, setBackupCount] = useState(0)
   const backupDropdownRef = useRef<HTMLDivElement>(null)
   const [isEditingName, setIsEditingName] = useState(false)
@@ -45,17 +46,33 @@ export default function MainLayout({ user, onLogout }: MainLayoutProps) {
   const [selectedTemplate, setSelectedTemplate] = useState<{ name: string; path: string; modifiedAt: string } | null>(null)
   const [showTrackManager, setShowTrackManager] = useState(false)
   const [showDeleteConfirm, setShowDeleteConfirm] = useState(false)
+  const [showTrackDeleteConfirm, setShowTrackDeleteConfirm] = useState(false)
+  const [trackToDelete, setTrackToDelete] = useState<{ index: number; type: string; name?: string } | null>(null)
+  const [projectToDelete, setProjectToDelete] = useState<{ name: string; path: string } | null>(null)
+  const [showNewDropdown, setShowNewDropdown] = useState(false)
+  const newDropdownRef = useRef<HTMLDivElement>(null)
+  const [projectToOpen, setProjectToOpen] = useState<{ name: string; path: string; draftPath: string } | null>(null)
+  const [projectSource, setProjectSource] = useState<'local' | 'cloud'>('local')
+  const [cloudFolderPath, setCloudFolderPath] = useState<string | null>(() => {
+    try { return localStorage.getItem('capcut_cloud_folder') } catch { return null }
+  })
+  const [cloudProjects, setCloudProjects] = useState<Array<{ name: string; path: string; draftPath: string; modifiedAt: string }>>([])
   const [logs, setLogs] = useState<LogEntry[]>([
     { id: '1', type: 'info', message: 'CapCut Sync Pro v2.0 iniciado', timestamp: new Date() }
   ])
   const [logCounter, setLogCounter] = useState(1)
+  const [news, setNews] = useState<{ title: string; description: string; badge: string; link?: string | null }>({
+    title: 'Sistema de Templates',
+    description: 'Crie projetos a partir de templates existentes',
+    badge: 'NOVO'
+  })
 
-  // Cores iguais aos elementos do CapCut
+  // Cores - usando laranja como cor principal do app
   const tabs = [
-    { id: 'sync' as const, label: 'SYNC', icon: Zap, hexColor: '#175d62' },           // Verde/Teal (vídeo)
-    { id: 'loop' as const, label: 'LOOP', icon: RefreshCw, hexColor: '#175d62' },     // Verde (loop)
-    { id: 'srt' as const, label: 'SRT', icon: FileText, hexColor: '#9c4937' },        // Marrom (legenda)
-    { id: 'media' as const, label: 'MÍDIA', icon: Film, hexColor: '#6b21a8' },        // Roxo (mídia)
+    { id: 'sync' as const, label: 'SYNC', icon: Zap, hexColor: '#E85A2A' },           // Laranja (sincronizar)
+    { id: 'loop' as const, label: 'LOOP', icon: RefreshCw, hexColor: '#E85A2A' },     // Laranja (repetir)
+    { id: 'srt' as const, label: '+ SRT', icon: FileText, hexColor: '#E85A2A' },      // Laranja (adicionar legenda)
+    { id: 'media' as const, label: '+ MÍDIA', icon: Film, hexColor: '#E85A2A' },      // Laranja (adicionar mídia)
   ]
 
   // Calcular dias restantes de trial
@@ -63,7 +80,7 @@ export default function MainLayout({ user, onLogout }: MainLayoutProps) {
     ? Math.max(0, Math.ceil((new Date(user.trialExpiresAt).getTime() - Date.now()) / (24 * 60 * 60 * 1000)))
     : -1
 
-  // Check for updates on mount
+  // Check for updates and fetch news on mount
   useEffect(() => {
     async function checkUpdates() {
       if (!ipcRenderer) return
@@ -75,6 +92,12 @@ export default function MainLayout({ user, onLogout }: MainLayoutProps) {
         if (updateInfo.hasUpdate) {
           setUpdateAvailable({ version: updateInfo.version, downloadUrl: updateInfo.downloadUrl })
           addLog('info', `Nova versão disponível: v${updateInfo.version}`)
+        }
+
+        // Fetch news
+        const newsResult = await ipcRenderer.invoke('fetch-news')
+        if (newsResult.success && newsResult.news) {
+          setNews(newsResult.news)
         }
       } catch (e) {
         console.error('Error checking updates:', e)
@@ -131,6 +154,19 @@ export default function MainLayout({ user, onLogout }: MainLayoutProps) {
     }
     return () => document.removeEventListener('mousedown', handleClickOutside)
   }, [showBackupDropdown])
+
+  // Close new dropdown when clicking outside
+  useEffect(() => {
+    const handleClickOutside = (event: MouseEvent) => {
+      if (newDropdownRef.current && !newDropdownRef.current.contains(event.target as Node)) {
+        setShowNewDropdown(false)
+      }
+    }
+    if (showNewDropdown) {
+      document.addEventListener('mousedown', handleClickOutside)
+    }
+    return () => document.removeEventListener('mousedown', handleClickOutside)
+  }, [showNewDropdown])
 
   const addLog = (type: LogEntry['type'], message: string) => {
     setLogCounter(c => c + 1)
@@ -278,6 +314,63 @@ export default function MainLayout({ user, onLogout }: MainLayoutProps) {
     }
   }
 
+  // Selecionar pasta de nuvem
+  const handleSelectCloudFolder = async () => {
+    if (!ipcRenderer) return
+
+    try {
+      const result = await ipcRenderer.invoke('select-cloud-folder')
+      if (result.error) {
+        addLog('error', result.error)
+        return
+      }
+
+      if (result.canceled) return
+
+      const folderPath = result.folderPath
+      setCloudFolderPath(folderPath)
+      localStorage.setItem('capcut_cloud_folder', folderPath)
+      addLog('success', `Pasta de nuvem configurada: ${result.folderName}`)
+
+      // Detectar projetos da pasta de nuvem
+      await handleDetectCloudProjects(folderPath)
+    } catch (error) {
+      addLog('error', 'Erro ao selecionar pasta: ' + error)
+    }
+  }
+
+  // Detectar projetos da pasta de nuvem
+  const handleDetectCloudProjects = async (folderPath?: string) => {
+    if (!ipcRenderer) return
+
+    const targetFolder = folderPath || cloudFolderPath
+    if (!targetFolder) {
+      addLog('warning', 'Selecione uma pasta de nuvem primeiro')
+      return
+    }
+
+    addLog('info', 'Detectando projetos da nuvem...')
+
+    try {
+      const result = await ipcRenderer.invoke('detect-capcut-folder', { customPath: targetFolder })
+      if (result.error) {
+        addLog('error', result.error)
+        return
+      }
+
+      if (result.projects.length === 0) {
+        addLog('warning', 'Nenhum projeto encontrado na pasta de nuvem')
+        setCloudProjects([])
+        return
+      }
+
+      setCloudProjects(result.projects)
+      addLog('success', `${result.count} projetos de nuvem encontrados!`)
+    } catch (error) {
+      addLog('error', 'Erro ao detectar projetos de nuvem: ' + error)
+    }
+  }
+
   // Renomear projeto
   const handleRenameProject = async () => {
     if (!projectPath || !ipcRenderer || !editingName.trim()) {
@@ -411,28 +504,44 @@ export default function MainLayout({ user, onLogout }: MainLayoutProps) {
     }
   }
 
-  // Deletar projeto atual
+  // Deletar projeto (atual ou da lista)
   const handleDeleteProject = async () => {
-    if (!ipcRenderer || !projectPath) return
+    if (!ipcRenderer) return
 
-    addLog('info', `Deletando projeto "${projectName}"...`)
+    // Usa projectToDelete se disponível, senão usa o projeto atual
+    const targetPath = projectToDelete?.path || projectPath
+    const targetName = projectToDelete?.name || projectName
+
+    if (!targetPath) return
+
+    addLog('info', `Deletando projeto "${targetName}"...`)
     setShowDeleteConfirm(false)
 
     try {
-      const result = await ipcRenderer.invoke('delete-project', { projectPath })
+      const result = await ipcRenderer.invoke('delete-project', { projectPath: targetPath })
       if (result.error) {
         addLog('error', result.error)
+        setProjectToDelete(null)
         return
       }
 
       addLog('success', `Projeto "${result.deletedName}" deletado com sucesso`)
-      setProjectPath(null)
-      setProjectName(null)
-      setDraftPath(null)
-      setTracks([])
-      setSelectedAudioTrack(0)
+
+      // Se deletou o projeto atual, limpa o estado
+      if (targetPath === projectPath) {
+        setProjectPath(null)
+        setProjectName(null)
+        setDraftPath(null)
+        setTracks([])
+        setSelectedAudioTrack(0)
+      }
+
+      // Remove o projeto da lista
+      setCapCutProjects(prev => prev.filter(p => p.path !== targetPath))
+      setProjectToDelete(null)
     } catch (error) {
       addLog('error', 'Erro ao deletar projeto: ' + error)
+      setProjectToDelete(null)
     }
   }
 
@@ -470,16 +579,27 @@ export default function MainLayout({ user, onLogout }: MainLayoutProps) {
     }
   }
 
-  // Deletar track específica por índice
-  const handleDeleteTrack = async (trackIndex: number) => {
-    if (!ipcRenderer || !draftPath) return
+  // Mostrar modal de confirmação para deletar track
+  const handleDeleteTrack = (trackIndex: number) => {
+    const track = tracks.find((_, idx) => idx === trackIndex) || tracks[trackIndex]
+    if (track) {
+      setTrackToDelete({ index: trackIndex, type: track.type, name: track.name })
+      setShowTrackDeleteConfirm(true)
+    }
+  }
 
-    addLog('info', `Removendo track ${trackIndex + 1}...`)
+  // Confirmar e deletar track
+  const confirmDeleteTrack = async () => {
+    if (!ipcRenderer || !draftPath || !trackToDelete) return
+
+    addLog('info', `Removendo track ${trackToDelete.type}...`)
+    setShowTrackDeleteConfirm(false)
 
     try {
-      const result = await ipcRenderer.invoke('delete-track', { draftPath, trackIndex })
+      const result = await ipcRenderer.invoke('delete-track', { draftPath, trackIndex: trackToDelete.index })
       if (result.error) {
         addLog('error', result.error)
+        setTrackToDelete(null)
         return
       }
 
@@ -493,6 +613,7 @@ export default function MainLayout({ user, onLogout }: MainLayoutProps) {
     } catch (error) {
       addLog('error', 'Erro ao remover track: ' + error)
     }
+    setTrackToDelete(null)
   }
 
   // Selecionar projeto da lista
@@ -541,7 +662,7 @@ export default function MainLayout({ user, onLogout }: MainLayoutProps) {
   return (
     <div className="h-screen w-screen bg-background-dark flex flex-col overflow-hidden">
       {/* Titlebar */}
-      <div className="drag-region h-10 bg-background-dark-alt border-b border-border-light flex items-center justify-between px-3 flex-shrink-0">
+      <div className="drag-region h-10 bg-gradient-to-r from-background-dark-alt to-background-dark border-b border-border-light flex items-center justify-between px-3 flex-shrink-0">
         <div className="flex items-center gap-2 no-drag">
           <img src={require('../assets/icon.png')} alt="Logo" className="w-5 h-5 rounded" />
           <span className="text-xs font-medium text-white">CapCut Sync Pro</span>
@@ -618,7 +739,8 @@ export default function MainLayout({ user, onLogout }: MainLayoutProps) {
               }`}
               style={activeTab === tab.id ? {
                 backgroundColor: `${tab.hexColor}30`,
-                borderColor: `${tab.hexColor}80`
+                borderColor: `${tab.hexColor}80`,
+                boxShadow: `0 0 12px ${tab.hexColor}50`
               } : {}}
             >
               <tab.icon
@@ -646,11 +768,11 @@ export default function MainLayout({ user, onLogout }: MainLayoutProps) {
           {/* Help button - opens internal modal */}
           <button
             onClick={() => setShowHelp(true)}
-            className="w-12 h-10 rounded-lg flex flex-col items-center justify-center hover:bg-white/5 transition-colors"
-            title="Como usar"
+            className="w-12 h-10 rounded-lg flex flex-col items-center justify-center hover:bg-primary/20 transition-colors border border-transparent hover:border-primary/30"
+            title="Como usar o CapCut Sync Pro"
           >
-            <HelpCircle className="w-4 h-4 text-text-secondary" />
-            <span className="text-[8px] text-text-muted">Ajuda</span>
+            <HelpCircle className="w-4 h-4 text-primary" />
+            <span className="text-[8px] text-primary/80">AJUDA</span>
           </button>
         </div>
 
@@ -677,24 +799,56 @@ export default function MainLayout({ user, onLogout }: MainLayoutProps) {
                 <FolderOpen className="w-3.5 h-3.5" />
                 Manual
               </button>
-              <button
-                onClick={handleNewProject}
-                disabled={isLoading}
-                className="py-1.5 px-3 flex items-center gap-1.5 text-xs font-medium rounded-lg transition-all bg-white/10 text-text-secondary hover:bg-white/20 disabled:opacity-50"
-                title="Criar novo projeto do zero"
-              >
-                <Plus className="w-3.5 h-3.5" />
-                Novo
-              </button>
-              <button
-                onClick={handleOpenTemplatePicker}
-                disabled={isLoading}
-                className="py-1.5 px-3 flex items-center gap-1.5 text-xs font-medium rounded-lg transition-all bg-white/10 text-text-secondary hover:bg-white/20 disabled:opacity-50"
-                title="Criar projeto a partir de um template existente"
-              >
-                <Copy className="w-3.5 h-3.5" />
-                Template
-              </button>
+              {/* Novo button with dropdown */}
+              <div ref={newDropdownRef} className="relative">
+                <button
+                  onClick={() => setShowNewDropdown(!showNewDropdown)}
+                  disabled={isLoading}
+                  className="py-1.5 px-3 flex items-center gap-1.5 text-xs font-medium rounded-lg transition-all bg-white/10 text-text-secondary hover:bg-white/20 disabled:opacity-50"
+                  title="Criar novo projeto"
+                >
+                  <Plus className="w-3.5 h-3.5" />
+                  Novo
+                  <ChevronDown className={`w-3 h-3 transition-transform ${showNewDropdown ? 'rotate-180' : ''}`} />
+                </button>
+
+                {/* Dropdown */}
+                <AnimatePresence>
+                  {showNewDropdown && (
+                    <motion.div
+                      initial={{ opacity: 0, y: -5 }}
+                      animate={{ opacity: 1, y: 0 }}
+                      exit={{ opacity: 0, y: -5 }}
+                      className="absolute left-0 top-full mt-1 w-48 bg-[#141414] border border-border-light rounded-lg shadow-xl z-50 overflow-hidden"
+                    >
+                      <button
+                        onClick={() => { setShowNewDropdown(false); handleNewProject(); }}
+                        className="w-full p-3 flex items-center gap-3 hover:bg-white/10 transition-colors text-left"
+                      >
+                        <div className="w-8 h-8 rounded-lg bg-gradient-to-br from-primary/30 to-primary/10 flex items-center justify-center">
+                          <Plus className="w-4 h-4 text-primary" />
+                        </div>
+                        <div>
+                          <span className="text-xs text-white font-medium block">Novo do zero</span>
+                          <span className="text-[10px] text-text-muted">Projeto vazio</span>
+                        </div>
+                      </button>
+                      <button
+                        onClick={() => { setShowNewDropdown(false); handleOpenTemplatePicker(); }}
+                        className="w-full p-3 flex items-center gap-3 hover:bg-white/10 transition-colors text-left border-t border-border-light"
+                      >
+                        <div className="w-8 h-8 rounded-lg bg-gradient-to-br from-primary/30 to-primary/10 flex items-center justify-center">
+                          <Copy className="w-4 h-4 text-primary" />
+                        </div>
+                        <div>
+                          <span className="text-xs text-white font-medium block">A partir de template</span>
+                          <span className="text-[10px] text-text-muted">Usa projeto existente</span>
+                        </div>
+                      </button>
+                    </motion.div>
+                  )}
+                </AnimatePresence>
+              </div>
 
               {projectPath && (
                 <>
@@ -769,9 +923,7 @@ export default function MainLayout({ user, onLogout }: MainLayoutProps) {
                     title="Abrir CapCut"
                     style={{ backgroundColor: '#00d4aa', color: '#000' }}
                   >
-                    <svg className="w-4 h-4" viewBox="0 0 24 24" fill="currentColor">
-                      <path d="M12 2C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2zm-2 14.5v-9l6 4.5-6 4.5z"/>
-                    </svg>
+                    <img src={capcutLogo} alt="CapCut" className="w-5 h-5 rounded-full object-cover" />
                     Abrir CapCut
                   </button>
                   <button
@@ -819,9 +971,9 @@ export default function MainLayout({ user, onLogout }: MainLayoutProps) {
                         initial={{ opacity: 0, y: -5 }}
                         animate={{ opacity: 1, y: 0 }}
                         exit={{ opacity: 0, y: -5 }}
-                        className="absolute right-0 top-full mt-1 w-72 bg-background-dark border border-border-light rounded-lg shadow-xl z-50 overflow-hidden"
+                        className="absolute right-0 top-full mt-1 w-72 bg-[#141414] border border-border-light rounded-lg shadow-xl z-50 overflow-hidden"
                       >
-                        <div className="p-2 border-b border-border-light flex items-center justify-between">
+                        <div className="p-2 border-b border-border-light bg-[#1a1a1a] flex items-center justify-between">
                           <span className="text-xs font-medium text-white">Histórico de Backups</span>
                           <button
                             onClick={handleDeleteAllBackups}
@@ -844,7 +996,14 @@ export default function MainLayout({ user, onLogout }: MainLayoutProps) {
                               >
                                 <Undo2 className="w-3.5 h-3.5 text-yellow-400" />
                                 <div>
-                                  <div className="text-xs text-white">{backup.displayDate}</div>
+                                  <div className="text-xs text-white flex items-center gap-2">
+                                    {backup.displayDate}
+                                    {backup.description && (
+                                      <span className="text-[9px] bg-primary/20 text-primary px-1.5 py-0.5 rounded">
+                                        {backup.description}
+                                      </span>
+                                    )}
+                                  </div>
                                   <div className="text-[10px] text-text-muted">
                                     {idx === 0 ? 'Mais recente' : `Backup ${backupCount - idx}`}
                                   </div>
@@ -972,79 +1131,230 @@ export default function MainLayout({ user, onLogout }: MainLayoutProps) {
             <div className="w-72 border-l border-border-light flex-shrink-0 flex flex-col bg-gradient-to-b from-background-dark to-background-dark-alt">
               {/* Banner de novidades */}
               <div className="p-3 border-b border-border-light">
-                <div className="bg-gradient-to-r from-primary/20 to-primary/5 border border-primary/30 rounded-lg p-3 relative overflow-hidden">
+                <div
+                  className={`bg-gradient-to-r from-primary/20 to-primary/5 border border-primary/30 rounded-lg p-3 relative overflow-hidden ${news.link ? 'cursor-pointer hover:from-primary/30 hover:to-primary/10 transition-all' : ''}`}
+                  onClick={() => news.link && ipcRenderer?.invoke('open-external', news.link)}
+                >
                   <div className="absolute top-0 right-0 w-20 h-20 bg-primary/10 rounded-full blur-2xl -mr-10 -mt-10" />
                   <div className="relative">
                     <div className="flex items-center gap-2 mb-1">
-                      <span className="text-[10px] bg-primary/30 text-primary px-1.5 py-0.5 rounded font-medium">NOVO</span>
+                      <span className="text-[10px] bg-primary/30 text-primary px-1.5 py-0.5 rounded font-medium">{news.badge}</span>
+                      {news.link && <ExternalLink className="w-3 h-3 text-primary/50" />}
                     </div>
-                    <p className="text-xs text-white font-medium">Sistema de Templates</p>
-                    <p className="text-[10px] text-text-muted mt-0.5">Crie projetos a partir de templates existentes</p>
+                    <p className="text-xs text-white font-medium">{news.title}</p>
+                    <p className="text-[10px] text-text-muted mt-0.5">{news.description}</p>
                   </div>
                 </div>
               </div>
 
               {/* Lista de projetos */}
               <div className="flex-1 overflow-hidden flex flex-col">
-                <div className="p-3 border-b border-border-light flex items-center justify-between">
-                  <span className="text-xs font-medium text-white">Projetos CapCut</span>
-                  <button
-                    onClick={handleDetectCapCut}
-                    className="text-[10px] text-primary hover:text-primary/80 flex items-center gap-1"
-                  >
-                    <RefreshCw className="w-3 h-3" />
-                    Atualizar
-                  </button>
+                {/* Toggle Local / Nuvem */}
+                <div className="p-2 border-b border-border-light">
+                  <div className="flex rounded-lg bg-white/5 p-0.5">
+                    <button
+                      onClick={() => setProjectSource('local')}
+                      className={`flex-1 py-1.5 px-2 rounded-md text-[10px] font-medium transition-all flex items-center justify-center gap-1 ${
+                        projectSource === 'local'
+                          ? 'bg-primary text-white'
+                          : 'text-text-muted hover:text-white'
+                      }`}
+                    >
+                      <FolderOpen className="w-3 h-3" />
+                      Local
+                    </button>
+                    <button
+                      onClick={() => {
+                        setProjectSource('cloud')
+                        if (cloudFolderPath && cloudProjects.length === 0) {
+                          handleDetectCloudProjects()
+                        }
+                      }}
+                      className={`flex-1 py-1.5 px-2 rounded-md text-[10px] font-medium transition-all flex items-center justify-center gap-1 ${
+                        projectSource === 'cloud'
+                          ? 'bg-primary text-white'
+                          : 'text-text-muted hover:text-white'
+                      }`}
+                    >
+                      <Cloud className="w-3 h-3" />
+                      Nuvem
+                    </button>
+                  </div>
                 </div>
-                <div className="flex-1 overflow-y-auto p-2">
-                  {capCutProjects.length === 0 ? (
-                    <div className="text-center py-8">
-                      <FolderOpen className="w-8 h-8 text-text-muted mx-auto mb-2 opacity-30" />
-                      <p className="text-xs text-text-muted">Clique em "Detectar"</p>
-                      <p className="text-[10px] text-text-muted">para carregar projetos</p>
-                    </div>
+
+                {/* Header com botão de atualizar */}
+                <div className="p-2 border-b border-border-light flex items-center justify-between">
+                  {projectSource === 'local' ? (
+                    <>
+                      <span className="text-[10px] text-text-muted">Projetos locais</span>
+                      <button
+                        onClick={handleDetectCapCut}
+                        className="text-[10px] text-primary hover:text-primary/80 flex items-center gap-1"
+                      >
+                        <RefreshCw className="w-3 h-3" />
+                        Atualizar
+                      </button>
+                    </>
                   ) : (
-                    <div className="space-y-1">
-                      {capCutProjects.slice(0, 10).map((project) => (
+                    <>
+                      <span className="text-[10px] text-text-muted truncate flex-1" title={cloudFolderPath || undefined}>
+                        {cloudFolderPath ? cloudFolderPath.split(/[/\\]/).pop() : 'Nenhuma pasta'}
+                      </span>
+                      <div className="flex items-center gap-1">
                         <button
-                          key={project.path}
-                          onClick={() => handleSelectProject(project)}
-                          className={`w-full p-2 rounded-lg text-left transition-all ${
-                            projectPath === project.path
-                              ? 'bg-primary/20 border border-primary/50'
-                              : 'bg-white/5 hover:bg-white/10 border border-transparent'
-                          }`}
+                          onClick={handleSelectCloudFolder}
+                          className="text-[10px] text-primary hover:text-primary/80 flex items-center gap-1"
+                          title="Selecionar pasta"
                         >
-                          <div className="flex items-center gap-2">
-                            <div className={`w-6 h-6 rounded flex items-center justify-center flex-shrink-0 ${
-                              projectPath === project.path ? 'bg-primary/30' : 'bg-white/10'
-                            }`}>
-                              <Film className="w-3 h-3 text-primary" />
-                            </div>
-                            <div className="min-w-0 flex-1">
-                              <span className={`text-xs block truncate ${
-                                projectPath === project.path ? 'text-primary font-medium' : 'text-white'
-                              }`}>
-                                {project.name}
-                              </span>
-                              <span className="text-[9px] text-text-muted flex items-center gap-1">
-                                <Clock className="w-2.5 h-2.5" />
-                                {formatRelativeDate(project.modifiedAt)}
-                              </span>
-                            </div>
-                            {projectPath === project.path && (
+                          <FolderOpen className="w-3 h-3" />
+                        </button>
+                        {cloudFolderPath && (
+                          <button
+                            onClick={() => handleDetectCloudProjects()}
+                            className="text-[10px] text-primary hover:text-primary/80 flex items-center gap-1"
+                          >
+                            <RefreshCw className="w-3 h-3" />
+                          </button>
+                        )}
+                      </div>
+                    </>
+                  )}
+                </div>
+
+                {/* Lista de projetos */}
+                <div className="flex-1 overflow-y-auto p-2">
+                  {projectSource === 'local' ? (
+                    // Projetos locais
+                    capCutProjects.length === 0 ? (
+                      <div className="text-center py-8">
+                        <FolderOpen className="w-8 h-8 text-text-muted mx-auto mb-2 opacity-30" />
+                        <p className="text-xs text-text-muted">Clique em "Atualizar"</p>
+                        <p className="text-[10px] text-text-muted">para carregar projetos</p>
+                      </div>
+                    ) : (
+                      <div className="space-y-1">
+                        {capCutProjects.map((project) => (
+                          <div
+                            key={project.path}
+                            className={`w-full p-2 rounded-lg text-left transition-all group ${
+                              projectPath === project.path
+                                ? 'bg-primary/20 border border-primary/50'
+                                : 'bg-white/5 hover:bg-white/10 border border-transparent'
+                            }`}
+                          >
+                            <div className="flex items-center gap-2">
                               <button
-                                onClick={(e) => { e.stopPropagation(); setShowDeleteConfirm(true); }}
-                                className="p-1 hover:bg-red-500/20 rounded text-text-muted hover:text-red-400"
+                                onClick={() => {
+                                  if (projectPath === project.path) return
+                                  setProjectToOpen(project)
+                                }}
+                                className="flex items-center gap-2 flex-1 min-w-0"
+                              >
+                                <div className={`w-6 h-6 rounded flex items-center justify-center flex-shrink-0 ${
+                                  projectPath === project.path ? 'bg-primary/30' : 'bg-white/10'
+                                }`}>
+                                  <Film className="w-3 h-3 text-primary" />
+                                </div>
+                                <div className="min-w-0 flex-1 text-left">
+                                  <span className={`text-xs block truncate ${
+                                    projectPath === project.path ? 'text-primary font-medium' : 'text-white'
+                                  }`}>
+                                    {project.name}
+                                  </span>
+                                  <span className="text-[9px] text-text-muted flex items-center gap-1">
+                                    <Clock className="w-2.5 h-2.5" />
+                                    {formatRelativeDate(project.modifiedAt)}
+                                  </span>
+                                </div>
+                              </button>
+                              <button
+                                onClick={(e) => {
+                                  e.stopPropagation();
+                                  setProjectToDelete({ name: project.name, path: project.path });
+                                  setShowDeleteConfirm(true);
+                                }}
+                                className="p-1 hover:bg-red-500/20 rounded text-text-muted hover:text-red-400 opacity-0 group-hover:opacity-100 transition-opacity"
                                 title="Deletar projeto"
                               >
                                 <Trash2 className="w-3 h-3" />
                               </button>
-                            )}
+                            </div>
                           </div>
+                        ))}
+                      </div>
+                    )
+                  ) : (
+                    // Projetos de nuvem
+                    !cloudFolderPath ? (
+                      <div className="text-center py-8">
+                        <Cloud className="w-8 h-8 text-primary mx-auto mb-2 opacity-30" />
+                        <p className="text-xs text-text-muted">Clique na pasta</p>
+                        <p className="text-[10px] text-text-muted">para selecionar pasta de nuvem</p>
+                        <button
+                          onClick={handleSelectCloudFolder}
+                          className="mt-3 text-[10px] px-3 py-1.5 bg-primary/20 text-primary rounded-lg hover:bg-primary/30 transition-colors"
+                        >
+                          Selecionar pasta
                         </button>
-                      ))}
-                    </div>
+                      </div>
+                    ) : cloudProjects.length === 0 ? (
+                      <div className="text-center py-8">
+                        <Cloud className="w-8 h-8 text-primary mx-auto mb-2 opacity-30" />
+                        <p className="text-xs text-text-muted">Nenhum projeto</p>
+                        <p className="text-[10px] text-text-muted">encontrado na pasta</p>
+                      </div>
+                    ) : (
+                      <div className="space-y-1">
+                        {cloudProjects.map((project) => (
+                          <div
+                            key={project.path}
+                            className={`w-full p-2 rounded-lg text-left transition-all group ${
+                              projectPath === project.path
+                                ? 'bg-primary/20 border border-primary/50'
+                                : 'bg-white/5 hover:bg-white/10 border border-transparent'
+                            }`}
+                          >
+                            <div className="flex items-center gap-2">
+                              <button
+                                onClick={() => {
+                                  if (projectPath === project.path) return
+                                  setProjectToOpen(project)
+                                }}
+                                className="flex items-center gap-2 flex-1 min-w-0"
+                              >
+                                <div className={`w-6 h-6 rounded flex items-center justify-center flex-shrink-0 ${
+                                  projectPath === project.path ? 'bg-primary/30' : 'bg-white/10'
+                                }`}>
+                                  <Cloud className="w-3 h-3 text-primary" />
+                                </div>
+                                <div className="min-w-0 flex-1 text-left">
+                                  <span className={`text-xs block truncate ${
+                                    projectPath === project.path ? 'text-primary font-medium' : 'text-white'
+                                  }`}>
+                                    {project.name}
+                                  </span>
+                                  <span className="text-[9px] text-text-muted flex items-center gap-1">
+                                    <Clock className="w-2.5 h-2.5" />
+                                    {formatRelativeDate(project.modifiedAt)}
+                                  </span>
+                                </div>
+                              </button>
+                              <button
+                                onClick={(e) => {
+                                  e.stopPropagation();
+                                  setProjectToDelete({ name: project.name, path: project.path });
+                                  setShowDeleteConfirm(true);
+                                }}
+                                className="p-1 hover:bg-red-500/20 rounded text-text-muted hover:text-red-400 opacity-0 group-hover:opacity-100 transition-opacity"
+                                title="Deletar projeto"
+                              >
+                                <Trash2 className="w-3 h-3" />
+                              </button>
+                            </div>
+                          </div>
+                        ))}
+                      </div>
+                    )
                   )}
                 </div>
               </div>
@@ -1054,7 +1364,7 @@ export default function MainLayout({ user, onLogout }: MainLayoutProps) {
       </div>
 
       {/* Footer */}
-      <div className="h-5 bg-background-dark-alt border-t border-border-light flex items-center justify-center px-3 flex-shrink-0">
+      <div className="h-5 bg-gradient-to-r from-background-dark-alt to-background-dark border-t border-border-light flex items-center justify-center px-3 flex-shrink-0">
         <span className="text-[9px] text-text-muted">
           Desenvolvido por <button onClick={() => ipcRenderer?.invoke('open-external', 'https://nardoto.com.br')} className="text-primary hover:underline">Nardoto</button>
         </span>
@@ -1081,10 +1391,10 @@ export default function MainLayout({ user, onLogout }: MainLayoutProps) {
               initial={{ opacity: 0, scale: 0.95 }}
               animate={{ opacity: 1, scale: 1 }}
               exit={{ opacity: 0, scale: 0.95 }}
-              className="fixed inset-x-4 top-20 bottom-20 md:inset-x-20 bg-background-dark border border-border-light rounded-xl z-50 flex flex-col overflow-hidden"
+              className="fixed inset-x-4 top-20 bottom-20 md:inset-x-20 bg-[#0f0f0f] border border-border-light rounded-xl z-50 flex flex-col overflow-hidden"
             >
               {/* Header */}
-              <div className="flex items-center justify-between p-4 border-b border-border-light">
+              <div className="flex items-center justify-between p-4 border-b border-border-light bg-[#141414]">
                 <div>
                   <h2 className="text-lg font-bold text-white">Projetos do CapCut</h2>
                   <p className="text-xs text-text-muted">{capCutProjects.length} projetos encontrados (ordenados por modificação)</p>
@@ -1184,13 +1494,13 @@ export default function MainLayout({ user, onLogout }: MainLayoutProps) {
               initial={{ opacity: 0, scale: 0.95 }}
               animate={{ opacity: 1, scale: 1 }}
               exit={{ opacity: 0, scale: 0.95 }}
-              className="fixed inset-x-4 top-16 bottom-16 md:inset-x-16 bg-background-dark border border-border-light rounded-xl z-50 flex flex-col overflow-hidden"
+              className="fixed inset-x-4 top-16 bottom-16 md:inset-x-16 bg-[#0f0f0f] border border-border-light rounded-xl z-50 flex flex-col overflow-hidden"
             >
               {/* Header */}
-              <div className="flex items-center justify-between p-4 border-b border-border-light">
+              <div className="flex items-center justify-between p-4 border-b border-border-light bg-[#141414]">
                 <div className="flex items-center gap-3">
-                  <div className="w-10 h-10 rounded-xl flex items-center justify-center" style={{ backgroundColor: '#8b5cf620' }}>
-                    <Copy className="w-5 h-5" style={{ color: '#8b5cf6' }} />
+                  <div className="w-10 h-10 rounded-xl flex items-center justify-center bg-gradient-to-br from-primary/30 to-primary/10">
+                    <Copy className="w-5 h-5 text-primary" />
                   </div>
                   <div>
                     <h2 className="text-lg font-bold text-white">Criar a partir de Template</h2>
@@ -1220,19 +1530,19 @@ export default function MainLayout({ user, onLogout }: MainLayoutProps) {
                         onClick={() => setSelectedTemplate(project)}
                         className={`w-full p-3 rounded-lg transition-all text-left ${
                           selectedTemplate?.path === project.path
-                            ? 'bg-purple-500/20 border-2 border-purple-500'
-                            : 'bg-white/5 hover:bg-purple-500/10 border border-border-light hover:border-purple-500/50'
+                            ? 'bg-primary/20 border-2 border-primary'
+                            : 'bg-white/5 hover:bg-primary/10 border border-border-light hover:border-primary/50'
                         }`}
                       >
                         <div className="flex items-center gap-3">
                           <div className={`w-8 h-8 rounded-lg flex items-center justify-center flex-shrink-0 ${
-                            selectedTemplate?.path === project.path ? 'bg-purple-500/40' : 'bg-purple-500/20'
+                            selectedTemplate?.path === project.path ? 'bg-primary/40' : 'bg-primary/20'
                           }`}>
-                            <Copy className="w-4 h-4 text-purple-400" />
+                            <Copy className="w-4 h-4 text-primary" />
                           </div>
                           <div className="min-w-0 flex-1">
                             <span className={`font-medium block truncate ${
-                              selectedTemplate?.path === project.path ? 'text-purple-300' : 'text-white'
+                              selectedTemplate?.path === project.path ? 'text-primary-light' : 'text-white'
                             }`}>
                               {project.name}
                             </span>
@@ -1259,10 +1569,10 @@ export default function MainLayout({ user, onLogout }: MainLayoutProps) {
                       <div className="text-[10px] text-text-muted uppercase tracking-wider mb-3">Configurações do novo projeto</div>
 
                       {/* Template selecionado info */}
-                      <div className="bg-purple-500/10 border border-purple-500/30 rounded-lg p-3 mb-4">
+                      <div className="bg-primary/10 border border-primary/30 rounded-lg p-3 mb-4">
                         <div className="flex items-center gap-2 mb-2">
-                          <Copy className="w-4 h-4 text-purple-400" />
-                          <span className="text-sm font-medium text-purple-300">Template:</span>
+                          <Copy className="w-4 h-4 text-primary" />
+                          <span className="text-sm font-medium text-primary">Template:</span>
                         </div>
                         <span className="text-white font-medium">{selectedTemplate.name}</span>
                         <div className="text-[10px] text-text-muted mt-1">
@@ -1278,7 +1588,7 @@ export default function MainLayout({ user, onLogout }: MainLayoutProps) {
                           value={templateNewName}
                           onChange={(e) => setTemplateNewName(e.target.value)}
                           placeholder={`${selectedTemplate.name}_copia`}
-                          className="w-full bg-white/10 border border-border-light rounded-lg px-3 py-2 text-white text-sm focus:outline-none focus:ring-2 focus:ring-purple-500 focus:border-transparent"
+                          className="w-full bg-white/10 border border-border-light rounded-lg px-3 py-2 text-white text-sm focus:outline-none focus:ring-2 focus:ring-primary focus:border-transparent"
                         />
                       </div>
 
@@ -1289,7 +1599,7 @@ export default function MainLayout({ user, onLogout }: MainLayoutProps) {
                             type="checkbox"
                             checked={templateKeepMedia}
                             onChange={(e) => setTemplateKeepMedia(e.target.checked)}
-                            className="w-5 h-5 mt-0.5 rounded border-border-light bg-white/10 text-purple-500 focus:ring-purple-500"
+                            className="w-5 h-5 mt-0.5 rounded border-border-light bg-white/10 text-primary focus:ring-primary"
                           />
                           <div>
                             <span className="text-sm text-white block">Manter mídias</span>
@@ -1303,7 +1613,7 @@ export default function MainLayout({ user, onLogout }: MainLayoutProps) {
                             checked={templateExpandEffects}
                             onChange={(e) => setTemplateExpandEffects(e.target.checked)}
                             disabled={!templateKeepMedia}
-                            className="w-5 h-5 mt-0.5 rounded border-border-light bg-white/10 text-purple-500 focus:ring-purple-500"
+                            className="w-5 h-5 mt-0.5 rounded border-border-light bg-white/10 text-primary focus:ring-primary"
                           />
                           <div>
                             <span className="text-sm text-white block">Expandir efeitos/filtros</span>
@@ -1346,7 +1656,7 @@ export default function MainLayout({ user, onLogout }: MainLayoutProps) {
                   disabled={!selectedTemplate}
                   className={`py-2 px-6 flex items-center gap-2 text-sm font-medium rounded-lg transition-all ${
                     selectedTemplate
-                      ? 'bg-purple-500 hover:bg-purple-600 text-white'
+                      ? 'bg-primary hover:bg-primary-hover text-white'
                       : 'bg-white/10 text-text-muted cursor-not-allowed'
                   }`}
                 >
@@ -1377,10 +1687,10 @@ export default function MainLayout({ user, onLogout }: MainLayoutProps) {
               initial={{ opacity: 0, scale: 0.9, y: 20 }}
               animate={{ opacity: 1, scale: 1, y: 0 }}
               exit={{ opacity: 0, scale: 0.9, y: 20 }}
-              className="fixed left-1/2 top-1/2 -translate-x-1/2 -translate-y-1/2 w-[480px] bg-gradient-to-b from-background-dark to-background-dark-alt border border-border-light rounded-2xl z-50 flex flex-col overflow-hidden shadow-2xl"
+              className="fixed left-1/2 top-1/2 -translate-x-1/2 -translate-y-1/2 w-[480px] bg-[#0f0f0f] border border-border-light rounded-2xl z-50 flex flex-col overflow-hidden shadow-2xl"
             >
               {/* Header with gradient */}
-              <div className="relative p-5 border-b border-border-light bg-gradient-to-r from-primary/10 to-transparent">
+              <div className="relative p-5 border-b border-border-light bg-[#141414]">
                 <div className="absolute top-0 right-0 w-32 h-32 bg-primary/5 rounded-full blur-3xl -mr-16 -mt-16" />
                 <div className="flex items-center justify-between relative">
                   <div className="flex items-center gap-3">
@@ -1459,15 +1769,15 @@ export default function MainLayout({ user, onLogout }: MainLayoutProps) {
                               track.type === 'video' ? 'bg-gradient-to-br from-green-500/30 to-green-500/10' :
                               track.type === 'audio' ? 'bg-gradient-to-br from-cyan-500/30 to-cyan-500/10' :
                               track.type === 'text' ? 'bg-gradient-to-br from-orange-500/30 to-orange-500/10' :
-                              track.type === 'effect' ? 'bg-gradient-to-br from-purple-500/30 to-purple-500/10' :
-                              track.type === 'filter' ? 'bg-gradient-to-br from-blue-500/30 to-blue-500/10' :
+                              track.type === 'effect' ? 'bg-gradient-to-br from-primary/30 to-primary/10' :
+                              track.type === 'filter' ? 'bg-gradient-to-br from-purple-500/30 to-purple-500/10' :
                               'bg-gradient-to-br from-gray-500/30 to-gray-500/10'
                             }`}>
                               {track.type === 'video' && <Film className="w-4 h-4 text-green-400" />}
                               {track.type === 'audio' && <RefreshCw className="w-4 h-4 text-cyan-400" />}
                               {track.type === 'text' && <FileText className="w-4 h-4 text-orange-400" />}
-                              {track.type === 'effect' && <Zap className="w-4 h-4 text-purple-400" />}
-                              {track.type === 'filter' && <Film className="w-4 h-4 text-blue-400" />}
+                              {track.type === 'effect' && <Zap className="w-4 h-4 text-primary" />}
+                              {track.type === 'filter' && <Film className="w-4 h-4 text-purple-400" />}
                             </div>
                             <div>
                               <span className="text-sm text-white capitalize font-medium">{track.type}</span>
@@ -1506,10 +1816,10 @@ export default function MainLayout({ user, onLogout }: MainLayoutProps) {
               </div>
 
               {/* Footer */}
-              <div className="p-4 border-t border-border-light bg-gradient-to-r from-white/5 to-transparent">
+              <div className="p-4 border-t border-border-light bg-[#121212]">
                 <button
                   onClick={() => setShowTrackManager(false)}
-                  className="w-full py-2.5 bg-gradient-to-r from-white/10 to-white/5 hover:from-white/15 hover:to-white/10 border border-border-light rounded-xl text-sm text-white font-medium transition-all"
+                  className="w-full py-2.5 bg-white/10 hover:bg-white/15 border border-border-light rounded-xl text-sm text-white font-medium transition-all"
                 >
                   Fechar
                 </button>
@@ -1529,7 +1839,7 @@ export default function MainLayout({ user, onLogout }: MainLayoutProps) {
               animate={{ opacity: 1 }}
               exit={{ opacity: 0 }}
               className="fixed inset-0 bg-black/80 z-[60]"
-              onClick={() => setShowDeleteConfirm(false)}
+              onClick={() => { setShowDeleteConfirm(false); setProjectToDelete(null); }}
             />
 
             {/* Modal */}
@@ -1537,7 +1847,7 @@ export default function MainLayout({ user, onLogout }: MainLayoutProps) {
               initial={{ opacity: 0, scale: 0.95 }}
               animate={{ opacity: 1, scale: 1 }}
               exit={{ opacity: 0, scale: 0.95 }}
-              className="fixed left-1/2 top-1/2 -translate-x-1/2 -translate-y-1/2 w-[400px] bg-background-dark border border-red-500/30 rounded-xl z-[60] overflow-hidden"
+              className="fixed left-1/2 top-1/2 -translate-x-1/2 -translate-y-1/2 w-[400px] bg-[#0f0f0f] border border-red-500/30 rounded-xl z-[60] overflow-hidden"
             >
               <div className="p-6 text-center">
                 <div className="w-16 h-16 rounded-full bg-red-500/20 flex items-center justify-center mx-auto mb-4">
@@ -1545,12 +1855,12 @@ export default function MainLayout({ user, onLogout }: MainLayoutProps) {
                 </div>
                 <h3 className="text-lg font-bold text-white mb-2">Deletar projeto?</h3>
                 <p className="text-sm text-text-muted mb-6">
-                  Tem certeza que deseja deletar o projeto <span className="text-red-400 font-medium">"{projectName}"</span>?
+                  Tem certeza que deseja deletar o projeto <span className="text-red-400 font-medium">"{projectToDelete?.name || projectName}"</span>?
                   <br />Esta ação não pode ser desfeita.
                 </p>
                 <div className="flex gap-3">
                   <button
-                    onClick={() => setShowDeleteConfirm(false)}
+                    onClick={() => { setShowDeleteConfirm(false); setProjectToDelete(null); }}
                     className="flex-1 btn-secondary py-2.5 text-sm"
                   >
                     Cancelar
@@ -1560,6 +1870,110 @@ export default function MainLayout({ user, onLogout }: MainLayoutProps) {
                     className="flex-1 py-2.5 bg-red-500 hover:bg-red-600 text-white text-sm font-medium rounded-lg transition-colors"
                   >
                     Sim, deletar
+                  </button>
+                </div>
+              </div>
+            </motion.div>
+          </>
+        )}
+      </AnimatePresence>
+
+      {/* Track Delete Confirm Modal */}
+      <AnimatePresence>
+        {showTrackDeleteConfirm && trackToDelete && (
+          <>
+            {/* Backdrop */}
+            <motion.div
+              initial={{ opacity: 0 }}
+              animate={{ opacity: 1 }}
+              exit={{ opacity: 0 }}
+              className="fixed inset-0 bg-black/80 z-[60]"
+              onClick={() => { setShowTrackDeleteConfirm(false); setTrackToDelete(null); }}
+            />
+
+            {/* Modal */}
+            <motion.div
+              initial={{ opacity: 0, scale: 0.95 }}
+              animate={{ opacity: 1, scale: 1 }}
+              exit={{ opacity: 0, scale: 0.95 }}
+              className="fixed left-1/2 top-1/2 -translate-x-1/2 -translate-y-1/2 w-[400px] bg-[#0f0f0f] border border-red-500/30 rounded-xl z-[60] overflow-hidden"
+            >
+              <div className="p-6 text-center">
+                <div className="w-16 h-16 rounded-full bg-red-500/20 flex items-center justify-center mx-auto mb-4">
+                  <Trash2 className="w-8 h-8 text-red-400" />
+                </div>
+                <h3 className="text-lg font-bold text-white mb-2">Apagar track?</h3>
+                <p className="text-sm text-text-muted mb-6">
+                  Tem certeza que deseja apagar a track <span className="text-red-400 font-medium capitalize">"{trackToDelete.type}"</span>
+                  {trackToDelete.name && <> ({trackToDelete.name})</>}?
+                  <br />Esta ação não pode ser desfeita.
+                </p>
+                <div className="flex gap-3">
+                  <button
+                    onClick={() => { setShowTrackDeleteConfirm(false); setTrackToDelete(null); }}
+                    className="flex-1 btn-secondary py-2.5 text-sm"
+                  >
+                    Cancelar
+                  </button>
+                  <button
+                    onClick={confirmDeleteTrack}
+                    className="flex-1 py-2.5 bg-red-500 hover:bg-red-600 text-white text-sm font-medium rounded-lg transition-colors"
+                  >
+                    Sim, apagar
+                  </button>
+                </div>
+              </div>
+            </motion.div>
+          </>
+        )}
+      </AnimatePresence>
+
+      {/* Open Project Confirm Modal */}
+      <AnimatePresence>
+        {projectToOpen && (
+          <>
+            {/* Backdrop */}
+            <motion.div
+              initial={{ opacity: 0 }}
+              animate={{ opacity: 1 }}
+              exit={{ opacity: 0 }}
+              className="fixed inset-0 bg-black/80 z-[60]"
+              onClick={() => setProjectToOpen(null)}
+            />
+
+            {/* Modal */}
+            <motion.div
+              initial={{ opacity: 0, scale: 0.95 }}
+              animate={{ opacity: 1, scale: 1 }}
+              exit={{ opacity: 0, scale: 0.95 }}
+              className="fixed left-1/2 top-1/2 -translate-x-1/2 -translate-y-1/2 w-[400px] bg-[#0f0f0f] border border-primary/30 rounded-xl z-[60] overflow-hidden"
+            >
+              <div className="p-6 text-center">
+                <div className="w-16 h-16 rounded-full bg-primary/20 flex items-center justify-center mx-auto mb-4">
+                  <FolderOpen className="w-8 h-8 text-primary" />
+                </div>
+                <h3 className="text-lg font-bold text-white mb-2">Abrir projeto?</h3>
+                <p className="text-sm text-text-muted mb-6">
+                  Deseja abrir o projeto <span className="text-primary font-medium">"{projectToOpen.name}"</span>?
+                  {projectPath && (
+                    <><br /><span className="text-yellow-400 text-xs">O projeto atual será fechado.</span></>
+                  )}
+                </p>
+                <div className="flex gap-3">
+                  <button
+                    onClick={() => setProjectToOpen(null)}
+                    className="flex-1 btn-secondary py-2.5 text-sm"
+                  >
+                    Cancelar
+                  </button>
+                  <button
+                    onClick={() => {
+                      handleSelectProject(projectToOpen)
+                      setProjectToOpen(null)
+                    }}
+                    className="flex-1 py-2.5 bg-primary hover:brightness-110 text-white text-sm font-medium rounded-lg transition-all"
+                  >
+                    Sim, abrir
                   </button>
                 </div>
               </div>

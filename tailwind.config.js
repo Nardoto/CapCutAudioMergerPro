@@ -12,6 +12,7 @@ module.exports = {
         },
         background: {
           dark: '#0A0A0A',
+          'dark-alt': '#121212',
           card: '#141414',
           elevated: '#1A1A1A',
           hover: '#252525',

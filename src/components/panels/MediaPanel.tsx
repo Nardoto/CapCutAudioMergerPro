@@ -213,6 +213,9 @@ export default function MediaPanel({ onLog, draftPath, onReanalyze, selectedAudi
           else onLog('info', log)
         })
         onLog('success', `${result.stats?.totalMedia || selectedFiles.length} mdias inseridas!`)
+        // Save backup description
+        const desc = mediaType === 'audio' ? 'Áudio inserido' : 'Mídia inserida'
+        await ipcRenderer.invoke('save-backup-description', { draftPath, description: desc })
         setShowPreview(false)
         setMediaFiles([])
         onReanalyze?.()
@@ -315,10 +318,9 @@ export default function MediaPanel({ onLog, draftPath, onReanalyze, selectedAudi
               onClick={() => setUseExistingTrack(false)}
               className={`flex-1 px-3 py-2 rounded-lg text-sm transition-all ${
                 !useExistingTrack
-                  ? 'text-white font-medium'
+                  ? 'bg-primary text-white font-medium'
                   : 'bg-gray-700 text-gray-300 hover:bg-gray-600'
               }`}
-              style={!useExistingTrack ? { backgroundColor: '#0e3058' } : {}}
             >
               Nova Track
             </button>
@@ -326,16 +328,15 @@ export default function MediaPanel({ onLog, draftPath, onReanalyze, selectedAudi
               onClick={() => setUseExistingTrack(true)}
               className={`flex-1 px-3 py-2 rounded-lg text-sm transition-all ${
                 useExistingTrack
-                  ? 'text-white font-medium'
+                  ? 'bg-primary text-white font-medium'
                   : 'bg-gray-700 text-gray-300 hover:bg-gray-600'
               }`}
-              style={useExistingTrack ? { backgroundColor: '#0e3058' } : {}}
             >
               Track de Referencia
             </button>
           </div>
           {useExistingTrack && refTrackName && (
-            <div className="text-xs text-center py-1" style={{ color: '#0e3058' }}>
+            <div className="text-xs text-center py-1 text-primary">
               Inserir no final de: <span className="font-medium">{refTrackName}</span>
             </div>
           )}
@@ -380,7 +381,7 @@ export default function MediaPanel({ onLog, draftPath, onReanalyze, selectedAudi
             {/* Header do preview */}
             <div className="p-3 bg-gray-700/50 flex items-center justify-between">
               <div className="flex items-center gap-2">
-                <Film className="w-4 h-4 text-purple-400" />
+                <Film className="w-4 h-4 text-primary" />
                 <span className="text-sm font-medium">
                   {selectedCount} de {mediaFiles.length} selecionados
                 </span>
@@ -415,12 +416,12 @@ export default function MediaPanel({ onLog, draftPath, onReanalyze, selectedAudi
                   onClick={() => toggleFileSelection(index)}
                   className={`flex items-center gap-3 p-2 rounded cursor-pointer transition-all ${
                     file.selected
-                      ? 'bg-purple-600/20 border border-purple-500/30'
+                      ? 'bg-primary/20 border border-primary/30'
                       : 'bg-gray-700/30 hover:bg-gray-700/50'
                   }`}
                 >
                   <div className={`w-5 h-5 rounded flex items-center justify-center ${
-                    file.selected ? 'bg-purple-600' : 'bg-gray-600'
+                    file.selected ? 'bg-primary' : 'bg-gray-600'
                   }`}>
                     {file.selected && <Check className="w-3 h-3" />}
                   </div>
@@ -444,8 +445,7 @@ export default function MediaPanel({ onLog, draftPath, onReanalyze, selectedAudi
                   </div>
                   <div className="w-full h-2 bg-gray-600 rounded-full overflow-hidden">
                     <motion.div
-                      className="h-full rounded-full"
-                      style={{ backgroundColor: mediaType === 'video_image' ? '#175d62' : '#0e3058' }}
+                      className="h-full rounded-full bg-primary"
                       initial={{ width: '0%' }}
                       animate={{ width: '100%' }}
                       transition={{ duration: Math.max(1, selectedCount * 0.05), ease: 'linear' }}
@@ -465,8 +465,7 @@ export default function MediaPanel({ onLog, draftPath, onReanalyze, selectedAudi
                 <button
                   onClick={handleInsert}
                   disabled={isProcessing || selectedCount === 0}
-                  className="px-4 py-2 disabled:bg-gray-600 disabled:cursor-not-allowed rounded-lg flex items-center gap-2 transition-all font-medium text-white"
-                  style={{ backgroundColor: isProcessing ? undefined : (mediaType === 'video_image' ? '#175d62' : '#0e3058') }}
+                  className="px-4 py-2 bg-primary disabled:bg-gray-600 disabled:cursor-not-allowed rounded-lg flex items-center gap-2 transition-all font-medium text-white hover:brightness-110"
                 >
                   {isProcessing ? (
                     <RefreshCw className="w-4 h-4 animate-spin" />

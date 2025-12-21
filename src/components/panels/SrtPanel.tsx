@@ -221,6 +221,9 @@ export default function SrtPanel({ onLog, draftPath, onReanalyze }: SrtPanelProp
         result.logs?.forEach((log: string) => onLog('info', log))
         onLog('success', `Legendas inseridas! ${result.stats.totalSubtitles} segmentos em ${result.stats.tracksCreated} track(s)`)
 
+        // Save backup description
+        await ipcRenderer.invoke('save-backup-description', { draftPath, description: 'SRT inserido' })
+
         // Desmarcar os arquivos que foram inseridos e atualizar a lista
         setMatches(prev => prev.map(m => selectedItems.some(s => s.srtFile === m.srtFile) ? { ...m, selected: false } : m))
         setUnmatched(prev => prev.map(m => selectedItems.some(s => s.srtFile === m.srtFile) ? { ...m, selected: false } : m))
@@ -361,6 +364,8 @@ export default function SrtPanel({ onLog, draftPath, onReanalyze }: SrtPanelProp
       } else {
         result.logs?.forEach((log: string) => onLog('info', log))
         onLog('success', `Inserido! ${result.stats.totalSubtitles} segmentos, duração total: ${formatDuration(result.stats.totalDuration)}`)
+        // Save backup description
+        await ipcRenderer.invoke('save-backup-description', { draftPath, description: 'SRT em massa' })
         setBatchFiles(prev => prev.map(f => selectedFiles.some(s => s.srtPath === f.srtPath) ? { ...f, selected: false } : f))
         onReanalyze?.()
       }
@@ -388,8 +393,8 @@ export default function SrtPanel({ onLog, draftPath, onReanalyze }: SrtPanelProp
     <div className="p-4 space-y-6 overflow-y-auto h-full">
       {/* Header */}
       <div className="flex items-center gap-3">
-        <div className="w-10 h-10 rounded-xl flex items-center justify-center" style={{ backgroundColor: '#9c493730' }}>
-          <FileText className="w-5 h-5" style={{ color: '#9c4937' }} />
+        <div className="w-10 h-10 rounded-xl flex items-center justify-center bg-gradient-to-br from-primary/40 to-primary/10">
+          <FileText className="w-5 h-5 text-primary" />
         </div>
         <div>
           <h2 className="text-lg font-semibold text-white">Legendas SRT</h2>
@@ -465,7 +470,7 @@ export default function SrtPanel({ onLog, draftPath, onReanalyze }: SrtPanelProp
           <div className="flex items-center justify-between text-sm">
             <div className="flex items-center gap-4">
               <div className="flex items-center gap-1.5">
-                <FileText className="w-4 h-4" style={{ color: '#9c4937' }} />
+                <FileText className="w-4 h-4 text-primary" />
                 <span className="text-white font-medium">{scanStats.totalSrt}</span>
                 <span className="text-text-muted">SRTs</span>
               </div>
@@ -520,8 +525,7 @@ export default function SrtPanel({ onLog, draftPath, onReanalyze }: SrtPanelProp
             type="checkbox"
             checked={createTitle}
             onChange={(e) => setCreateTitle(e.target.checked)}
-            className="w-4 h-4 rounded border-border-light bg-white/5 focus:ring-offset-0"
-            style={{ accentColor: '#9c4937' }}
+            className="w-4 h-4 rounded border-border-light bg-white/5 focus:ring-offset-0 accent-primary"
           />
           <BookOpen className="w-4 h-4 text-text-muted transition-colors" />
           <span className="text-sm text-text-primary">Criar texto de título</span>
@@ -532,8 +536,7 @@ export default function SrtPanel({ onLog, draftPath, onReanalyze }: SrtPanelProp
       <button
         onClick={handleInsertSubtitles}
         disabled={!srtFolder || !hasProject || isProcessing || selectedCount === 0}
-        className="w-full py-4 px-4 text-white font-semibold rounded-xl transition-all disabled:opacity-50 disabled:cursor-not-allowed flex items-center justify-center gap-2 hover:brightness-110"
-        style={{ backgroundColor: '#9c4937' }}
+        className="w-full py-4 px-4 bg-primary text-white font-semibold rounded-xl transition-all disabled:opacity-50 disabled:cursor-not-allowed flex items-center justify-center gap-2 hover:brightness-110"
       >
         {isProcessing ? (
           <>
@@ -717,8 +720,7 @@ export default function SrtPanel({ onLog, draftPath, onReanalyze }: SrtPanelProp
                 </div>
                 <button
                   onClick={() => setShowPreview(false)}
-                  className="py-1.5 px-4 text-xs text-white font-semibold rounded-lg transition-all hover:brightness-110"
-                  style={{ backgroundColor: '#9c4937' }}
+                  className="py-1.5 px-4 text-xs bg-primary text-white font-semibold rounded-lg transition-all hover:brightness-110"
                 >
                   OK
                 </button>
@@ -769,7 +771,7 @@ export default function SrtPanel({ onLog, draftPath, onReanalyze }: SrtPanelProp
               <div className="flex items-center justify-between text-sm">
                 <div className="flex items-center gap-4">
                   <div className="flex items-center gap-1.5">
-                    <FileText className="w-4 h-4" style={{ color: '#9c4937' }} />
+                    <FileText className="w-4 h-4 text-primary" />
                     <span className="text-white font-medium">{batchFiles.length}</span>
                     <span className="text-text-muted">arquivos</span>
                   </div>
@@ -803,7 +805,7 @@ export default function SrtPanel({ onLog, draftPath, onReanalyze }: SrtPanelProp
                 step="0.5"
                 value={gapSeconds}
                 onChange={(e) => setGapSeconds(parseFloat(e.target.value))}
-                className="flex-1 accent-[#9c4937]"
+                className="flex-1 accent-primary"
               />
               <span className="text-sm text-white font-medium w-12 text-center">
                 {gapSeconds}s
@@ -823,7 +825,7 @@ export default function SrtPanel({ onLog, draftPath, onReanalyze }: SrtPanelProp
                 checked={createTitle}
                 onChange={(e) => setCreateTitle(e.target.checked)}
                 className="w-4 h-4 rounded border-border-light bg-white/5 focus:ring-offset-0"
-                style={{ accentColor: '#9c4937' }}
+                className="accent-primary"
               />
               <BookOpen className="w-4 h-4 text-text-muted transition-colors" />
               <span className="text-sm text-text-primary">Criar texto de título</span>
@@ -835,7 +837,7 @@ export default function SrtPanel({ onLog, draftPath, onReanalyze }: SrtPanelProp
             onClick={handleInsertBatch}
             disabled={!hasProject || isProcessing || batchSelectedCount === 0}
             className="w-full py-4 px-4 text-white font-semibold rounded-xl transition-all disabled:opacity-50 disabled:cursor-not-allowed flex items-center justify-center gap-2 hover:brightness-110"
-            style={{ backgroundColor: '#9c4937' }}
+            className="bg-primary"
           >
             {isProcessing ? (
               <>
@@ -962,7 +964,7 @@ export default function SrtPanel({ onLog, draftPath, onReanalyze }: SrtPanelProp
                     <button
                       onClick={() => setShowBatchPreview(false)}
                       className="py-1.5 px-4 text-xs text-white font-semibold rounded-lg transition-all hover:brightness-110"
-                      style={{ backgroundColor: '#9c4937' }}
+                      className="bg-primary"
                     >
                       OK
                     </button>

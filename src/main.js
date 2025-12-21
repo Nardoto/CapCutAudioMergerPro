@@ -914,6 +914,45 @@ ipcMain.handle('download-update', async (_, downloadUrl) => {
 
 ipcMain.handle('get-app-version', () => APP_VERSION);
 
+// ============ FETCH NEWS ============
+const NEWS_URL = 'https://nardoto.com.br/nardoto-updates/capcut-sync-pro-news.json';
+
+ipcMain.handle('fetch-news', async () => {
+  return new Promise((resolve) => {
+    https.get(NEWS_URL, (res) => {
+      let data = '';
+      res.on('data', chunk => data += chunk);
+      res.on('end', () => {
+        try {
+          const news = JSON.parse(data);
+          resolve({ success: true, news });
+        } catch (e) {
+          // Fallback news if fetch fails
+          resolve({
+            success: true,
+            news: {
+              title: 'Sistema de Templates',
+              description: 'Crie projetos a partir de templates existentes',
+              badge: 'NOVO',
+              link: null
+            }
+          });
+        }
+      });
+    }).on('error', () => {
+      resolve({
+        success: true,
+        news: {
+          title: 'Sistema de Templates',
+          description: 'Crie projetos a partir de templates existentes',
+          badge: 'NOVO',
+          link: null
+        }
+      });
+    });
+  });
+});
+
 // ============ SYNC PROJECT (via Python) ============
 ipcMain.handle('sync-project', async (_, { draftPath, audioTrackIndex, mode, syncSubtitles, applyAnimations }) => {
   return runPython({ action: 'sync', draftPath, audioTrackIndex, mode: mode || 'audio', syncSubtitles, applyAnimations });
@@ -977,12 +1016,34 @@ ipcMain.handle('run-python', async (_, command) => {
 
 // ============ BACKUP / UNDO SYSTEM (Multi-level) ============
 
+// Load backup descriptions from file
+function loadBackupDescriptions(dir) {
+  const descPath = path.join(dir, 'backup_descriptions.json');
+  try {
+    if (fs.existsSync(descPath)) {
+      return JSON.parse(fs.readFileSync(descPath, 'utf-8'));
+    }
+  } catch (e) { console.error('Error loading backup descriptions:', e); }
+  return {};
+}
+
+// Save backup descriptions to file
+function saveBackupDescriptions(dir, descriptions) {
+  const descPath = path.join(dir, 'backup_descriptions.json');
+  try {
+    fs.writeFileSync(descPath, JSON.stringify(descriptions, null, 2));
+  } catch (e) { console.error('Error saving backup descriptions:', e); }
+}
+
 // List all backups for a project
 ipcMain.handle('list-backups', async (_, draftPath) => {
   try {
     const dir = path.dirname(draftPath);
     const baseName = path.basename(draftPath, '.json');
     const files = fs.readdirSync(dir);
+
+    // Load descriptions
+    const descriptions = loadBackupDescriptions(dir);
 
     // Find all backup files: draft_content_backup_YYYYMMDD_HHMMSS.json
     const backups = files
@@ -994,9 +1055,11 @@ ipcMain.handle('list-backups', async (_, draftPath) => {
         const match = f.match(/_backup_(\d{8})_(\d{6})\.json$/);
         let timestamp = stats.mtime;
         let displayDate = '';
+        let timestampKey = '';
         if (match) {
           const dateStr = match[1]; // 20251220
           const timeStr = match[2]; // 123456
+          timestampKey = `${dateStr}_${timeStr}`;
           const year = dateStr.substring(0, 4);
           const month = dateStr.substring(4, 6);
           const day = dateStr.substring(6, 8);
@@ -1011,7 +1074,8 @@ ipcMain.handle('list-backups', async (_, draftPath) => {
           path: fullPath,
           timestamp: timestamp.getTime(),
           displayDate,
-          size: stats.size
+          size: stats.size,
+          description: descriptions[timestampKey] || descriptions[f] || null
         };
       })
       .sort((a, b) => b.timestamp - a.timestamp); // Most recent first
@@ -1019,6 +1083,35 @@ ipcMain.handle('list-backups', async (_, draftPath) => {
     return { backups, count: backups.length };
   } catch (error) {
     return { backups: [], count: 0, error: error.message };
+  }
+});
+
+// Save description for the most recent backup
+ipcMain.handle('save-backup-description', async (_, { draftPath, description }) => {
+  try {
+    const dir = path.dirname(draftPath);
+    const descriptions = loadBackupDescriptions(dir);
+
+    // Find most recent backup to associate description
+    const baseName = path.basename(draftPath, '.json');
+    const files = fs.readdirSync(dir);
+    const backupFiles = files
+      .filter(f => f.startsWith(baseName + '_backup_') && f.endsWith('.json'))
+      .sort()
+      .reverse();
+
+    if (backupFiles.length > 0) {
+      const mostRecent = backupFiles[0];
+      const match = mostRecent.match(/_backup_(\d{8}_\d{6})\.json$/);
+      if (match) {
+        descriptions[match[1]] = description;
+        saveBackupDescriptions(dir, descriptions);
+        return { success: true, filename: mostRecent };
+      }
+    }
+    return { success: false, error: 'No backup found' };
+  } catch (error) {
+    return { success: false, error: error.message };
   }
 });
 
@@ -1106,16 +1199,16 @@ ipcMain.handle('delete-all-backups', async (_, draftPath) => {
 });
 
 // ============ DETECT CAPCUT PROJECTS FOLDER ============
-ipcMain.handle('detect-capcut-folder', async () => {
+ipcMain.handle('detect-capcut-folder', async (event, { customPath } = {}) => {
   try {
     const os = require('node:os');
     const homeDir = os.homedir();
 
-    // Caminho padrão do CapCut no Windows
-    const capCutPath = path.join(homeDir, 'AppData', 'Local', 'CapCut', 'User Data', 'Projects', 'com.lveditor.draft');
+    // Caminho padrão do CapCut no Windows ou customPath
+    const capCutPath = customPath || path.join(homeDir, 'AppData', 'Local', 'CapCut', 'User Data', 'Projects', 'com.lveditor.draft');
 
     if (!fs.existsSync(capCutPath)) {
-      return { error: 'Pasta do CapCut não encontrada no caminho padrão' };
+      return { error: customPath ? 'Pasta não encontrada' : 'Pasta do CapCut não encontrada no caminho padrão' };
     }
 
     // Listar projetos (pastas que contêm draft_content.json)
@@ -1145,6 +1238,38 @@ ipcMain.handle('detect-capcut-folder', async () => {
       capCutPath,
       projects,
       count: projects.length
+    };
+  } catch (error) {
+    return { error: error.message };
+  }
+});
+
+// ============ SELECT CLOUD FOLDER ============
+ipcMain.handle('select-cloud-folder', async () => {
+  try {
+    const os = require('node:os');
+    const homeDir = os.homedir();
+
+    // Caminho padrão da pasta Projects do CapCut
+    const defaultPath = path.join(homeDir, 'AppData', 'Local', 'CapCut', 'User Data', 'Projects');
+
+    const result = await dialog.showOpenDialog(mainWindow, {
+      title: 'Selecionar pasta de projetos de nuvem',
+      defaultPath: fs.existsSync(defaultPath) ? defaultPath : homeDir,
+      properties: ['openDirectory'],
+      buttonLabel: 'Selecionar pasta'
+    });
+
+    if (result.canceled) {
+      return { canceled: true };
+    }
+
+    const folderPath = result.filePaths[0];
+    const folderName = path.basename(folderPath);
+
+    return {
+      folderPath,
+      folderName
     };
   } catch (error) {
     return { error: error.message };

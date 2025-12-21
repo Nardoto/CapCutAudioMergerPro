@@ -130,14 +130,37 @@ select.input option {
 }
 
 .card {
-  background-color: #141414;
+  background: linear-gradient(180deg, #161616 0%, #0e0e0e 100%);
   border: 1px solid #2A2A2A;
   border-radius: 0.75rem;
 }
 
 .badge {
-  background-color: rgba(232, 90, 42, 0.2);
+  background: linear-gradient(135deg, rgba(232, 90, 42, 0.25) 0%, rgba(232, 90, 42, 0.1) 100%);
   color: #E85A2A;
   border-radius: 9999px;
   font-weight: 500;
+}
+
+/* Premium gradient utilities */
+.gradient-premium {
+  background: linear-gradient(180deg, #1a1a1a 0%, #0d0d0d 100%);
+}
+
+.gradient-header {
+  background: linear-gradient(90deg, rgba(232, 90, 42, 0.1) 0%, transparent 100%);
+}
+
+.gradient-hover:hover {
+  background: linear-gradient(180deg, rgba(255, 255, 255, 0.08) 0%, rgba(255, 255, 255, 0.02) 100%);
+}
+
+/* Scrollbar with gradient */
+::-webkit-scrollbar-thumb {
+  background: linear-gradient(180deg, #4a4a4a 0%, #2a2a2a 100%);
+  border-radius: 4px;
+}
+
+::-webkit-scrollbar-thumb:hover {
+  background: linear-gradient(180deg, #5a5a5a 0%, #3a3a3a 100%);
 }
