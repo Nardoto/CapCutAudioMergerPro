@@ -1390,100 +1390,221 @@ ipcMain.handle('google-oauth-browser', async () => {
   });
 });
 
-// ============ HELPER: Copy media files and update paths ============
-function copyMediaFiles(materials, targetProjectPath) {
-  const mediaDir = path.join(targetProjectPath, 'media');
-  if (!fs.existsSync(mediaDir)) {
-    fs.mkdirSync(mediaDir, { recursive: true });
-  }
-
-  const copiedFiles = new Map(); // Track already copied files to avoid duplicates
+// ============ HELPER: Copy all media files from source project to target ============
+function copyProjectMedia(sourceProjectPath, targetProjectPath) {
+  // Media file extensions to copy
+  const mediaExtensions = ['.jpg', '.jpeg', '.png', '.gif', '.bmp', '.webp', '.mp4', '.mov', '.avi', '.mkv', '.mp3', '.m4a', '.wav', '.aac', '.ogg', '.flac'];
   let copiedCount = 0;
 
-  // Helper to copy a single file
-  const copyFile = (sourcePath, materialId) => {
-    if (!sourcePath || typeof sourcePath !== 'string') return null;
+  try {
+    // Read all files in source project folder
+    const files = fs.readdirSync(sourceProjectPath);
 
-    // Skip if already copied
-    if (copiedFiles.has(sourcePath)) {
-      return copiedFiles.get(sourcePath);
-    }
+    for (const file of files) {
+      const ext = path.extname(file).toLowerCase();
+      if (mediaExtensions.includes(ext)) {
+        const sourcePath = path.join(sourceProjectPath, file);
+        const targetPath = path.join(targetProjectPath, file);
 
-    // Check if source file exists
-    if (!fs.existsSync(sourcePath)) {
-      console.log(`Media file not found: ${sourcePath}`);
-      return null;
-    }
+        // Only copy if source is a file (not directory)
+        const stat = fs.statSync(sourcePath);
+        if (stat.isFile()) {
+          // Skip if already exists with same size
+          if (fs.existsSync(targetPath)) {
+            const targetStat = fs.statSync(targetPath);
+            if (targetStat.size === stat.size) {
+              console.log(`Skipping (exists): ${file}`);
+              continue;
+            }
+          }
 
-    try {
-      const fileName = path.basename(sourcePath);
-      // Use material ID to make filename unique
-      const uniqueName = `${materialId}_${fileName}`;
-      const targetPath = path.join(mediaDir, uniqueName);
-
-      // Copy file
-      fs.copyFileSync(sourcePath, targetPath);
-      copiedFiles.set(sourcePath, targetPath);
-      copiedCount++;
-      console.log(`Copied media: ${fileName}`);
-      return targetPath;
-    } catch (err) {
-      console.error(`Error copying media: ${sourcePath}`, err.message);
-      return null;
-    }
-  };
-
-  // Process videos
-  if (materials.videos) {
-    for (const video of materials.videos) {
-      if (video.path) {
-        const newPath = copyFile(video.path, video.id);
-        if (newPath) {
-          video.path = newPath;
+          fs.copyFileSync(sourcePath, targetPath);
+          copiedCount++;
+          console.log(`Copied: ${file}`);
         }
       }
     }
+
+    console.log(`Media copy complete: ${copiedCount} files from ${path.basename(sourceProjectPath)}`);
+  } catch (err) {
+    console.error(`Error copying media from ${sourceProjectPath}:`, err.message);
   }
 
-  // Process audios
-  if (materials.audios) {
-    for (const audio of materials.audios) {
-      if (audio.path) {
-        const newPath = copyFile(audio.path, audio.id);
-        if (newPath) {
-          audio.path = newPath;
-        }
-      }
-    }
-  }
-
-  // Process images (if any)
-  if (materials.images) {
-    for (const image of materials.images) {
-      if (image.path) {
-        const newPath = copyFile(image.path, image.id);
-        if (newPath) {
-          image.path = newPath;
-        }
-      }
-    }
-  }
-
-  // Process stickers (if any have file paths)
-  if (materials.stickers) {
-    for (const sticker of materials.stickers) {
-      if (sticker.path) {
-        const newPath = copyFile(sticker.path, sticker.id);
-        if (newPath) {
-          sticker.path = newPath;
-        }
-      }
-    }
-  }
-
-  console.log(`Total media files copied: ${copiedCount}`);
   return copiedCount;
 }
+
+// ============ HELPER: Replace placeholder paths in content ============
+function replacePlaceholders(content, oldPlaceholderId, newPlaceholderId) {
+  // Convert content to string
+  const jsonString = typeof content === 'string' ? content : JSON.stringify(content);
+
+  // Replace all occurrences of the old placeholder with the new one
+  const oldPattern = `##_draftpath_placeholder_${oldPlaceholderId}_##`;
+  const newPattern = `##_draftpath_placeholder_${newPlaceholderId}_##`;
+
+  const updatedString = jsonString.split(oldPattern).join(newPattern);
+
+  // Return as object if input was object
+  return typeof content === 'string' ? updatedString : JSON.parse(updatedString);
+}
+
+// ============ HELPER: Extract placeholder ID from draft content ============
+function extractPlaceholderId(content) {
+  const jsonString = typeof content === 'string' ? content : JSON.stringify(content);
+  const match = jsonString.match(/##_draftpath_placeholder_([A-F0-9-]+)_##/i);
+  return match ? match[1] : null;
+}
+
+// ============ HELPER: Copy folder recursively ============
+function copyFolderRecursive(source, target) {
+  // Create target folder if it doesn't exist
+  if (!fs.existsSync(target)) {
+    fs.mkdirSync(target, { recursive: true });
+  }
+
+  // Get all files and folders in source
+  const items = fs.readdirSync(source);
+
+  for (const item of items) {
+    const sourcePath = path.join(source, item);
+    const targetPath = path.join(target, item);
+    const stat = fs.statSync(sourcePath);
+
+    if (stat.isDirectory()) {
+      // Recursively copy subdirectory
+      copyFolderRecursive(sourcePath, targetPath);
+    } else {
+      // Copy file
+      fs.copyFileSync(sourcePath, targetPath);
+    }
+  }
+}
+
+// ============ COPY CLOUD PROJECT TO LOCAL ============
+ipcMain.handle('copy-project-to-local', async (_, { projectPath }) => {
+  try {
+    const capCutDrafts = path.join(app.getPath('appData'), '..', 'Local', 'CapCut', 'User Data', 'Projects', 'com.lveditor.draft');
+    if (!fs.existsSync(capCutDrafts)) {
+      return { error: 'Pasta de projetos do CapCut não encontrada.' };
+    }
+
+    if (!projectPath || !fs.existsSync(projectPath)) {
+      return { error: 'Projeto não encontrado.' };
+    }
+
+    const draftContentPath = path.join(projectPath, 'draft_content.json');
+    if (!fs.existsSync(draftContentPath)) {
+      return { error: 'Arquivo draft_content.json não encontrado.' };
+    }
+
+    // Generate new project info
+    const timestamp = Date.now();
+    const microTimestamp = timestamp * 1000 + Math.floor(Math.random() * 1000);
+    const originalName = path.basename(projectPath);
+    const newProjectName = `${originalName}_local`;
+    const newProjectPath = path.join(capCutDrafts, newProjectName);
+    const newDraftId = generateUUID();
+
+    // Check if already exists - delete and recreate
+    if (fs.existsSync(newProjectPath)) {
+      console.log(`Deleting existing folder: ${newProjectName}`);
+      fs.rmSync(newProjectPath, { recursive: true, force: true });
+    }
+
+    // Copy entire folder recursively
+    console.log(`Copying entire folder from ${originalName} to ${newProjectName}...`);
+    copyFolderRecursive(projectPath, newProjectPath);
+    console.log('Folder copy complete');
+
+    // Read original draft content
+    const draftContent = JSON.parse(fs.readFileSync(path.join(newProjectPath, 'draft_content.json'), 'utf-8'));
+
+    // Replace placeholders with ABSOLUTE paths (CapCut local projects use absolute paths, not placeholders!)
+    const oldPlaceholderId = extractPlaceholderId(draftContent);
+    let updatedContent = draftContent;
+    if (oldPlaceholderId) {
+      // Convert placeholder to absolute path (use forward slashes like CapCut does)
+      const absolutePath = newProjectPath.replace(/\\/g, '/');
+      const placeholderPattern = `##_draftpath_placeholder_${oldPlaceholderId}_##`;
+      console.log(`Replacing placeholder with absolute path: ${placeholderPattern} -> ${absolutePath}`);
+
+      // Convert to string, replace, and parse back
+      const jsonString = JSON.stringify(draftContent);
+      const updatedString = jsonString.split(placeholderPattern).join(absolutePath);
+      updatedContent = JSON.parse(updatedString);
+    }
+
+    // Save updated draft_content.json
+    fs.writeFileSync(path.join(newProjectPath, 'draft_content.json'), JSON.stringify(updatedContent));
+
+    // Create draft_info.json
+    const draftInfo = {
+      draft_cloud_capcut_purchase_info: null, draft_cloud_purchase_info: null, draft_cloud_template_id: '',
+      draft_cloud_tutorial_info: null, draft_cloud_videocut_purchase_info: null, draft_cover: '', draft_deeplink_url: '',
+      draft_enterprise_info: null, draft_fold_path: newProjectPath, draft_id: newDraftId, draft_is_ai_shorts: false,
+      draft_is_article_video_draft: false, draft_is_from_deeplink: false, draft_is_invisible: false, draft_materials_copied: false,
+      draft_materials_copied_path: null, draft_name: newProjectName, draft_new_version: '', draft_removable_storage_device: '',
+      draft_root_path: capCutDrafts, draft_segment_extra_info: null, draft_timeline_materials_size: 0, draft_type: 'normal',
+      tm_draft_cloud_completed: null, tm_draft_cloud_modified: 0, tm_draft_create: Math.floor(timestamp / 1000),
+      tm_draft_modified: Math.floor(timestamp / 1000), tm_draft_removed: 0
+    };
+    fs.writeFileSync(path.join(newProjectPath, 'draft_info.json'), JSON.stringify(draftInfo, null, 2));
+
+    // Create draft_meta_info.json
+    const duration = updatedContent.duration || 0;
+    const draftMetaInfo = {
+      cloud_draft_cover: true, cloud_draft_sync: true, draft_cloud_last_action_download: false,
+      draft_cloud_purchase_info: '', draft_cloud_template_id: '', draft_cloud_tutorial_info: '',
+      draft_cloud_videocut_purchase_info: '', draft_cover: '',
+      draft_enterprise_info: { draft_enterprise_extra: '', draft_enterprise_id: '', draft_enterprise_name: '', enterprise_material: [] },
+      draft_fold_path: newProjectPath.replace(/\\/g, '/'), draft_id: newDraftId,
+      draft_is_ai_shorts: false, draft_is_article_video_draft: false, draft_is_cloud_temp_draft: false,
+      draft_is_from_deeplink: 'false', draft_is_invisible: false, draft_is_web_article_video: false,
+      draft_materials: [
+        { type: 0, value: [] }, { type: 1, value: [] }, { type: 2, value: [] },
+        { type: 3, value: [] }, { type: 6, value: [] }, { type: 7, value: [] }, { type: 8, value: [] }
+      ],
+      draft_materials_copied_info: [], draft_name: newProjectName, draft_need_rename_folder: false,
+      draft_new_version: '', draft_removable_storage_device: '',
+      draft_root_path: capCutDrafts.replace(/\\/g, '/'), draft_segment_extra_info: [],
+      draft_timeline_materials_size_: 0, draft_type: '',
+      tm_draft_create: microTimestamp, tm_draft_modified: microTimestamp, tm_draft_removed: 0, tm_duration: duration
+    };
+    fs.writeFileSync(path.join(newProjectPath, 'draft_meta_info.json'), JSON.stringify(draftMetaInfo));
+
+    // Register in root_meta_info.json
+    const rootMetaPath = path.join(capCutDrafts, 'root_meta_info.json');
+    let rootMeta = { all_draft_store: [], draft_ids: 0, root_path: capCutDrafts.replace(/\\/g, '/') };
+    if (fs.existsSync(rootMetaPath)) {
+      try { rootMeta = JSON.parse(fs.readFileSync(rootMetaPath, 'utf-8')); } catch (e) { console.error('Error reading root_meta_info:', e); }
+    }
+
+    const newDraftEntry = {
+      cloud_draft_cover: true, cloud_draft_sync: true, draft_cloud_last_action_download: false,
+      draft_cloud_purchase_info: '', draft_cloud_template_id: '', draft_cloud_tutorial_info: '',
+      draft_cloud_videocut_purchase_info: '', draft_cover: '',
+      draft_fold_path: newProjectPath.replace(/\\/g, '/'), draft_id: newDraftId,
+      draft_is_ai_shorts: false, draft_is_cloud_temp_draft: false, draft_is_invisible: false,
+      draft_is_web_article_video: false, draft_json_file: path.join(newProjectPath, 'draft_content.json').replace(/\\/g, '/'),
+      draft_name: newProjectName, draft_new_version: '', draft_root_path: capCutDrafts.replace(/\\/g, '/'),
+      draft_timeline_materials_size: 0, draft_type: '', draft_web_article_video_enter_from: '',
+      streaming_edit_draft_ready: true, tm_draft_cloud_completed: '', tm_draft_cloud_entry_id: -1,
+      tm_draft_cloud_modified: 0, tm_draft_cloud_parent_entry_id: -1, tm_draft_cloud_space_id: -1,
+      tm_draft_cloud_user_id: -1, tm_draft_create: microTimestamp, tm_draft_modified: microTimestamp,
+      tm_draft_removed: 0, tm_duration: duration
+    };
+
+    rootMeta.all_draft_store.unshift(newDraftEntry);
+    rootMeta.draft_ids = (rootMeta.draft_ids || 0) + 1;
+    fs.writeFileSync(rootMetaPath, JSON.stringify(rootMeta));
+
+    console.log(`Project copied to local: ${newProjectName}`);
+    return { success: true, localPath: newProjectPath, projectName: newProjectName };
+  } catch (err) {
+    console.error('Error copying project to local:', err);
+    return { error: err.message };
+  }
+});
 
 // ============ MERGE PROJECTS ============
 ipcMain.handle('merge-projects', async (_, { projectPaths, outputName, mode = 'flat' }) => {
@@ -1686,10 +1807,24 @@ ipcMain.handle('merge-projects', async (_, { projectPaths, outputName, mode = 'f
 
       mergedProject.duration = currentTimeOffset;
 
-      // Copy media files from source projects to merged project
-      console.log('Copying media files...');
-      const copiedMediaCount = copyMediaFiles(mergedProject.materials, projectPath);
-      console.log(`Media copy complete: ${copiedMediaCount} files`);
+      // Copy media files from each source project to merged project
+      console.log('Copying media files from source projects...');
+      let totalCopied = 0;
+      for (const srcProject of sourceProjects) {
+        // Copy all media files from source folder
+        const copied = copyProjectMedia(srcProject.path, projectPath);
+        totalCopied += copied;
+
+        // Get the old placeholder ID from source project
+        const oldPlaceholderId = extractPlaceholderId(srcProject.content);
+        if (oldPlaceholderId) {
+          console.log(`Replacing placeholders: ${oldPlaceholderId} -> ${newDraftId}`);
+          // Update mergedProject with replaced placeholders
+          const updatedContent = replacePlaceholders(mergedProject, oldPlaceholderId, newDraftId);
+          Object.assign(mergedProject, updatedContent);
+        }
+      }
+      console.log(`Total media files copied: ${totalCopied}`);
 
       // Save and register project (same as groups mode below)
       const draftPath = path.join(projectPath, 'draft_content.json');
@@ -1796,12 +1931,20 @@ ipcMain.handle('merge-projects', async (_, { projectPaths, outputName, mode = 'f
       const subdraftPath = path.join(subdraftFolder, subdraftId);
       fs.mkdirSync(subdraftPath, { recursive: true });
 
-      // Copy media files for this source project to the merged project's media folder
+      // Copy media files from source project folder to merged project folder
       console.log(`Copying media files for subdraft ${clipNumber}...`);
-      const subdraftMediaCount = copyMediaFiles(srcContent.materials, projectPath);
+      const subdraftMediaCount = copyProjectMedia(srcProject.path, projectPath);
       console.log(`Subdraft ${clipNumber} media copy complete: ${subdraftMediaCount} files`);
 
-      fs.writeFileSync(path.join(subdraftPath, 'draft_content.json'), JSON.stringify(srcContent));
+      // Replace placeholders in srcContent to point to new project
+      const oldPlaceholderId = extractPlaceholderId(srcContent);
+      let updatedSrcContent = srcContent;
+      if (oldPlaceholderId) {
+        console.log(`Replacing placeholders in subdraft: ${oldPlaceholderId} -> ${newDraftId}`);
+        updatedSrcContent = replacePlaceholders(srcContent, oldPlaceholderId, newDraftId);
+      }
+
+      fs.writeFileSync(path.join(subdraftPath, 'draft_content.json'), JSON.stringify(updatedSrcContent));
 
       // Create sub_draft_config.json
       const subDraftConfig = {
@@ -1821,7 +1964,7 @@ ipcMain.handle('merge-projects', async (_, { projectPaths, outputName, mode = 'f
         category_name: '',
         combination_id: combinationId,
         combination_type: 'none',
-        draft: srcContent,
+        draft: updatedSrcContent,
         draft_config_path: '',
         draft_cover_path: '',
         draft_file_path: draftFilePath,

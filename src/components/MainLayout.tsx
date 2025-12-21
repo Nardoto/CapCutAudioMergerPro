@@ -291,10 +291,10 @@ export default function MainLayout({ user, onLogout }: MainLayoutProps) {
 
   const audioTracks = tracks.filter(t => t.type === 'audio')
 
-  // Detectar projetos do CapCut automaticamente
+  // Abrir projeto do CapCut (detecta e abre picker)
   const handleDetectCapCut = async () => {
     if (!ipcRenderer) { addLog('error', 'Electron IPC not available'); return }
-    addLog('info', 'Detectando projetos do CapCut...')
+    addLog('info', 'Buscando projetos do CapCut...')
 
     try {
       const result = await ipcRenderer.invoke('detect-capcut-folder')
@@ -313,6 +313,21 @@ export default function MainLayout({ user, onLogout }: MainLayoutProps) {
       addLog('success', `${result.count} projetos encontrados!`)
     } catch (error) {
       addLog('error', 'Erro ao detectar: ' + error)
+    }
+  }
+
+  // Apenas atualizar lista de projetos (sem abrir picker)
+  const handleRefreshProjects = async () => {
+    if (!ipcRenderer) return
+
+    try {
+      const result = await ipcRenderer.invoke('detect-capcut-folder')
+      if (result.error) return
+
+      setCapCutProjects(result.projects)
+      addLog('info', `Lista atualizada: ${result.count} projetos`)
+    } catch (error) {
+      console.error('Error refreshing projects:', error)
     }
   }
 
@@ -787,10 +802,10 @@ export default function MainLayout({ user, onLogout }: MainLayoutProps) {
                 onClick={handleDetectCapCut}
                 disabled={isLoading}
                 className="py-1.5 px-3 flex items-center gap-1.5 text-xs font-medium rounded-lg transition-all bg-gradient-to-r from-primary to-primary/80 text-white hover:brightness-110 disabled:opacity-50"
-                title="Detectar projetos do CapCut automaticamente"
+                title="Abrir projeto do CapCut"
               >
                 <Search className="w-3.5 h-3.5" />
-                {isLoading ? 'Analisando...' : 'Detectar'}
+                {isLoading ? 'Analisando...' : 'Abrir Projeto'}
               </button>
               <button
                 onClick={handleSelectFolder}
@@ -1205,7 +1220,7 @@ export default function MainLayout({ user, onLogout }: MainLayoutProps) {
                     <>
                       <span className="text-[10px] text-text-muted">Projetos locais</span>
                       <button
-                        onClick={handleDetectCapCut}
+                        onClick={handleRefreshProjects}
                         className="text-[10px] text-primary hover:text-primary/80 flex items-center gap-1"
                       >
                         <RefreshCw className="w-3 h-3" />

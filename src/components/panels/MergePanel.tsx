@@ -176,11 +176,51 @@ export default function MergePanel({ onLog, onProjectChange, currentProjectPath 
     }
 
     setIsMerging(true)
-    onLog('info', `Mesclando ${selectedProjects.length} projetos...`)
 
     try {
+      // Check if any project is from a cloud cache folder
+      const isCloudProject = (path: string) => path.includes('.cloud_cache')
+      const hasCloudProjects = selectedProjects.some(p => isCloudProject(p.path))
+
+      let projectPathsToMerge = selectedProjects.map(p => p.path)
+
+      // If there are cloud projects, copy them to local first
+      if (hasCloudProjects) {
+        onLog('info', `Copiando ${selectedProjects.filter(p => isCloudProject(p.path)).length} projeto(s) da nuvem para local...`)
+
+        const localPaths: string[] = []
+        for (const project of selectedProjects) {
+          if (isCloudProject(project.path)) {
+            const copyResult = await ipcRenderer.invoke('copy-project-to-local', {
+              projectPath: project.path
+            })
+
+            if (copyResult.error) {
+              onLog('error', `Erro ao copiar ${project.name}: ${copyResult.error}`)
+              setIsMerging(false)
+              return
+            }
+
+            if (copyResult.alreadyExists) {
+              onLog('info', `Projeto ${copyResult.projectName} já existe localmente`)
+            } else {
+              onLog('success', `Projeto ${copyResult.projectName} copiado para local`)
+            }
+            localPaths.push(copyResult.localPath)
+          } else {
+            localPaths.push(project.path)
+          }
+        }
+
+        projectPathsToMerge = localPaths
+        // Refresh local projects list
+        loadLocalProjects()
+      }
+
+      onLog('info', `Mesclando ${selectedProjects.length} projetos...`)
+
       const result = await ipcRenderer.invoke('merge-projects', {
-        projectPaths: selectedProjects.map(p => p.path),
+        projectPaths: projectPathsToMerge,
         outputName: outputName || undefined,
         mode: mergeMode
       })
