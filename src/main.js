@@ -1390,6 +1390,101 @@ ipcMain.handle('google-oauth-browser', async () => {
   });
 });
 
+// ============ HELPER: Copy media files and update paths ============
+function copyMediaFiles(materials, targetProjectPath) {
+  const mediaDir = path.join(targetProjectPath, 'media');
+  if (!fs.existsSync(mediaDir)) {
+    fs.mkdirSync(mediaDir, { recursive: true });
+  }
+
+  const copiedFiles = new Map(); // Track already copied files to avoid duplicates
+  let copiedCount = 0;
+
+  // Helper to copy a single file
+  const copyFile = (sourcePath, materialId) => {
+    if (!sourcePath || typeof sourcePath !== 'string') return null;
+
+    // Skip if already copied
+    if (copiedFiles.has(sourcePath)) {
+      return copiedFiles.get(sourcePath);
+    }
+
+    // Check if source file exists
+    if (!fs.existsSync(sourcePath)) {
+      console.log(`Media file not found: ${sourcePath}`);
+      return null;
+    }
+
+    try {
+      const fileName = path.basename(sourcePath);
+      // Use material ID to make filename unique
+      const uniqueName = `${materialId}_${fileName}`;
+      const targetPath = path.join(mediaDir, uniqueName);
+
+      // Copy file
+      fs.copyFileSync(sourcePath, targetPath);
+      copiedFiles.set(sourcePath, targetPath);
+      copiedCount++;
+      console.log(`Copied media: ${fileName}`);
+      return targetPath;
+    } catch (err) {
+      console.error(`Error copying media: ${sourcePath}`, err.message);
+      return null;
+    }
+  };
+
+  // Process videos
+  if (materials.videos) {
+    for (const video of materials.videos) {
+      if (video.path) {
+        const newPath = copyFile(video.path, video.id);
+        if (newPath) {
+          video.path = newPath;
+        }
+      }
+    }
+  }
+
+  // Process audios
+  if (materials.audios) {
+    for (const audio of materials.audios) {
+      if (audio.path) {
+        const newPath = copyFile(audio.path, audio.id);
+        if (newPath) {
+          audio.path = newPath;
+        }
+      }
+    }
+  }
+
+  // Process images (if any)
+  if (materials.images) {
+    for (const image of materials.images) {
+      if (image.path) {
+        const newPath = copyFile(image.path, image.id);
+        if (newPath) {
+          image.path = newPath;
+        }
+      }
+    }
+  }
+
+  // Process stickers (if any have file paths)
+  if (materials.stickers) {
+    for (const sticker of materials.stickers) {
+      if (sticker.path) {
+        const newPath = copyFile(sticker.path, sticker.id);
+        if (newPath) {
+          sticker.path = newPath;
+        }
+      }
+    }
+  }
+
+  console.log(`Total media files copied: ${copiedCount}`);
+  return copiedCount;
+}
+
 // ============ MERGE PROJECTS ============
 ipcMain.handle('merge-projects', async (_, { projectPaths, outputName, mode = 'flat' }) => {
   try {
@@ -1591,6 +1686,11 @@ ipcMain.handle('merge-projects', async (_, { projectPaths, outputName, mode = 'f
 
       mergedProject.duration = currentTimeOffset;
 
+      // Copy media files from source projects to merged project
+      console.log('Copying media files...');
+      const copiedMediaCount = copyMediaFiles(mergedProject.materials, projectPath);
+      console.log(`Media copy complete: ${copiedMediaCount} files`);
+
       // Save and register project (same as groups mode below)
       const draftPath = path.join(projectPath, 'draft_content.json');
       fs.writeFileSync(draftPath, JSON.stringify(mergedProject));
@@ -1695,6 +1795,12 @@ ipcMain.handle('merge-projects', async (_, { projectPaths, outputName, mode = 'f
       // Create subdraft folder and save draft content (like CapCut does)
       const subdraftPath = path.join(subdraftFolder, subdraftId);
       fs.mkdirSync(subdraftPath, { recursive: true });
+
+      // Copy media files for this source project to the merged project's media folder
+      console.log(`Copying media files for subdraft ${clipNumber}...`);
+      const subdraftMediaCount = copyMediaFiles(srcContent.materials, projectPath);
+      console.log(`Subdraft ${clipNumber} media copy complete: ${subdraftMediaCount} files`);
+
       fs.writeFileSync(path.join(subdraftPath, 'draft_content.json'), JSON.stringify(srcContent));
 
       // Create sub_draft_config.json
