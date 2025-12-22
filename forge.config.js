@@ -6,7 +6,7 @@ module.exports = {
     asar: true,
     icon: './src/assets/icon',
     name: 'CapCut Sync Pro',
-    extraResource: ['./python'],
+    extraResource: ['./python', './assets/voices'],
   },
   rebuildConfig: {},
   makers: [

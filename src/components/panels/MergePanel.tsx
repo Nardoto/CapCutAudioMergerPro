@@ -1,6 +1,6 @@
 import { useState, useEffect, useMemo } from 'react'
 import { motion, AnimatePresence } from 'framer-motion'
-import { Layers, FolderOpen, Check, ChevronUp, ChevronDown, Trash2, Play, Clock, AlertCircle, RefreshCw, Sparkles, Cloud } from 'lucide-react'
+import { Layers, FolderOpen, Check, ChevronUp, ChevronDown, Trash2, Clock, AlertCircle, RefreshCw, Sparkles, Cloud } from 'lucide-react'
 import type { LogEntry } from '../../types'
 
 const { ipcRenderer } = window.require ? window.require('electron') : { ipcRenderer: null }
@@ -49,7 +49,7 @@ export default function MergePanel({ onLog, onProjectChange, currentProjectPath 
   const [customPath, setCustomPath] = useState<string | null>(() => {
     try { return localStorage.getItem('capcut_merge_custom_folder') } catch { return null }
   })
-  const [mergeMode, setMergeMode] = useState<'groups' | 'flat'>('flat') // 'groups' = composite clips, 'flat' = direct merge
+  const [mergeMode, setMergeMode] = useState<'groups' | 'flat'>('flat')
   const [lastMergedPath, setLastMergedPath] = useState<string | null>(null)
   const [isCleaning, setIsCleaning] = useState(false)
   const [projectSource, setProjectSource] = useState<'local' | 'custom'>('local')
@@ -235,10 +235,9 @@ export default function MergePanel({ onLog, onProjectChange, currentProjectPath 
         setShowSuccess(true)
         setSelectedProjects([])
         setOutputName('')
-        handleRefresh() // Refresh list
+        handleRefresh()
         onProjectChange?.()
 
-        // Hide success after 5 seconds
         setTimeout(() => setShowSuccess(false), 5000)
       }
     } catch (error) {
@@ -250,7 +249,6 @@ export default function MergePanel({ onLog, onProjectChange, currentProjectPath 
 
   // Get projects based on current source
   const currentProjects = projectSource === 'local' ? projects : customProjects
-  const availableProjects = currentProjects.filter(p => !selectedProjects.some(sp => sp.path === p.path))
 
   const handleCleanSubtitles = async (pathToClean?: string) => {
     const targetPath = pathToClean || lastMergedPath
@@ -296,9 +294,9 @@ export default function MergePanel({ onLog, onProjectChange, currentProjectPath 
   }, [selectedProjects])
 
   return (
-    <div className="space-y-4">
+    <div className="h-full flex flex-col">
       {/* Header */}
-      <div className="flex items-center justify-between">
+      <div className="flex items-center justify-between mb-4">
         <div className="flex items-center gap-2">
           <Layers className="w-5 h-5 text-primary" />
           <span className="text-sm font-medium text-white">Mesclar Projetos</span>
@@ -313,329 +311,325 @@ export default function MergePanel({ onLog, onProjectChange, currentProjectPath 
         </button>
       </div>
 
-      {/* Toggle Local / Outra Pasta */}
-      <div className="flex rounded-lg bg-white/5 p-0.5">
-        <button
-          onClick={() => setProjectSource('local')}
-          className={`flex-1 py-1.5 px-2 rounded-md text-[10px] font-medium transition-all flex items-center justify-center gap-1 ${
-            projectSource === 'local'
-              ? 'bg-primary text-white'
-              : 'text-text-muted hover:text-white'
-          }`}
-        >
-          <FolderOpen className="w-3 h-3" />
-          Local
-        </button>
-        <button
-          onClick={() => {
-            setProjectSource('custom')
-            if (customPath && customProjects.length === 0) {
-              loadCustomProjects()
-            }
-          }}
-          className={`flex-1 py-1.5 px-2 rounded-md text-[10px] font-medium transition-all flex items-center justify-center gap-1 ${
-            projectSource === 'custom'
-              ? 'bg-primary text-white'
-              : 'text-text-muted hover:text-white'
-          }`}
-        >
-          <Cloud className="w-3 h-3" />
-          Outra Pasta
-        </button>
-      </div>
-
-      {/* Custom folder selector */}
-      {projectSource === 'custom' && (
-        <div className="flex items-center justify-between p-2 rounded-lg bg-white/5">
-          <span className="text-[10px] text-text-muted truncate flex-1" title={customPath || undefined}>
-            {customPath ? customPath.split(/[/\\]/).pop() : 'Nenhuma pasta selecionada'}
-          </span>
-          <button
-            onClick={handleSelectCustomFolder}
-            className="text-[10px] text-primary hover:text-primary/80 flex items-center gap-1 ml-2"
-            title="Selecionar pasta"
-          >
-            <FolderOpen className="w-3 h-3" />
-            {customPath ? 'Alterar' : 'Selecionar'}
-          </button>
-        </div>
-      )}
-
-      {/* Clean subtitles button - when project is open */}
-      {currentProjectPath && !showSuccess && (
-        <div className="p-3 rounded-xl bg-yellow-500/10 border border-yellow-500/30 space-y-3">
-          <div className="space-y-1">
-            <div className="flex items-center gap-2">
-              <Sparkles className="w-4 h-4 text-yellow-400" />
-              <span className="text-xs font-medium text-yellow-400">
-                Correção de Legendas
-              </span>
-            </div>
-            <p className="text-[10px] text-text-muted leading-relaxed">
-              Use após mesclar projetos com legendas. Primeiro abra o projeto mesclado no CapCut
-              (para ele processar os arquivos), feche o CapCut, e então clique no botão abaixo
-              para corrigir as legendas que aparecem como JSON.
-            </p>
+      {/* Two Column Layout */}
+      <div className="flex-1 flex gap-4 min-h-0">
+        {/* LEFT SIDE - Projects List (narrower) */}
+        <div className="w-72 flex flex-col min-w-0 bg-white/5 rounded-xl border border-border overflow-hidden flex-shrink-0">
+          {/* List Header */}
+          <div className="p-3 border-b border-border bg-white/5 flex items-center justify-between">
+            <span className="text-xs font-medium text-text-secondary">
+              PROJETOS DISPONÍVEIS ({currentProjects.length})
+            </span>
+            <span className="text-[10px] text-text-muted">
+              {selectedProjects.length} selecionado(s)
+            </span>
           </div>
+
+          {/* Projects List */}
+          <div className="flex-1 overflow-y-auto p-2">
+            {isLoading ? (
+              <div className="flex items-center justify-center py-8">
+                <span className="w-5 h-5 border-2 border-primary/30 border-t-primary rounded-full animate-spin" />
+              </div>
+            ) : projectSource === 'custom' && !customPath ? (
+              <div className="text-center py-8">
+                <Cloud className="w-10 h-10 text-primary mx-auto mb-3 opacity-30" />
+                <p className="text-xs text-text-muted">Selecione uma pasta</p>
+                <button
+                  onClick={handleSelectCustomFolder}
+                  className="mt-3 text-[10px] px-3 py-1.5 bg-primary/20 text-primary rounded-lg hover:bg-primary/30 transition-colors"
+                >
+                  Selecionar pasta
+                </button>
+              </div>
+            ) : currentProjects.length === 0 ? (
+              <div className="flex items-center justify-center py-8 text-xs text-text-muted">
+                Nenhum projeto encontrado
+              </div>
+            ) : (
+              <div className="space-y-1">
+                {currentProjects.map((project) => {
+                  const isSelected = selectedProjects.some(p => p.path === project.path)
+                  const selectionIndex = selectedProjects.findIndex(p => p.path === project.path)
+
+                  return (
+                    <button
+                      key={project.path}
+                      onClick={() => toggleProjectSelection(project)}
+                      className={`w-full flex items-center gap-3 p-2 rounded-lg transition-all text-left group ${
+                        isSelected
+                          ? 'bg-primary/20 border border-primary/50'
+                          : 'hover:bg-white/5 border border-transparent'
+                      }`}
+                    >
+                      {/* Checkbox */}
+                      <div className={`w-5 h-5 rounded border-2 flex items-center justify-center flex-shrink-0 transition-all ${
+                        isSelected
+                          ? 'bg-primary border-primary'
+                          : 'border-text-muted/50 group-hover:border-primary'
+                      }`}>
+                        {isSelected && (
+                          <span className="text-[10px] font-bold text-white">{selectionIndex + 1}</span>
+                        )}
+                      </div>
+
+                      {/* Thumbnail */}
+                      <div className="w-12 h-12 rounded-lg overflow-hidden flex-shrink-0 bg-black/30">
+                        <img
+                          src={`file://${project.path.replace(/\\/g, '/')}/draft_cover.jpg`}
+                          alt=""
+                          className="w-full h-full object-cover"
+                          onError={(e) => {
+                            const target = e.target as HTMLImageElement
+                            // Try draft_frame.jpg as fallback
+                            if (!target.src.includes('draft_frame')) {
+                              target.src = `file://${project.path.replace(/\\/g, '/')}/draft_frame.jpg`
+                            } else {
+                              target.style.display = 'none'
+                              target.parentElement!.classList.add('flex', 'items-center', 'justify-center')
+                              target.parentElement!.innerHTML = '<svg class="w-5 h-5 text-text-muted" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M7 4v16M17 4v16M3 8h4m10 0h4M3 12h18M3 16h4m10 0h4M4 20h16a1 1 0 001-1V5a1 1 0 00-1-1H4a1 1 0 00-1 1v14a1 1 0 001 1z"></path></svg>'
+                            }
+                          }}
+                        />
+                      </div>
+
+                      {/* Info */}
+                      <div className="flex-1 min-w-0">
+                        <span className={`text-sm block truncate ${isSelected ? 'text-primary font-medium' : 'text-white'}`}>
+                          {project.name}
+                        </span>
+                        <div className="flex items-center gap-1 text-[10px] text-text-muted">
+                          <Clock className="w-3 h-3" />
+                          {formatDuration(project.duration)}
+                        </div>
+                      </div>
+                    </button>
+                  )
+                })}
+              </div>
+            )}
+          </div>
+        </div>
+
+        {/* RIGHT SIDE - Controls (wider) */}
+        <div className="flex-1 flex flex-col gap-3 min-w-0">
+          {/* Source Toggle */}
+          <div className="flex rounded-lg bg-white/5 p-0.5">
+            <button
+              onClick={() => setProjectSource('local')}
+              className={`flex-1 py-1.5 px-2 rounded-md text-[10px] font-medium transition-all flex items-center justify-center gap-1 ${
+                projectSource === 'local'
+                  ? 'bg-primary text-white'
+                  : 'text-text-muted hover:text-white'
+              }`}
+            >
+              <FolderOpen className="w-3 h-3" />
+              Local
+            </button>
+            <button
+              onClick={() => {
+                setProjectSource('custom')
+                if (customPath && customProjects.length === 0) {
+                  loadCustomProjects()
+                }
+              }}
+              className={`flex-1 py-1.5 px-2 rounded-md text-[10px] font-medium transition-all flex items-center justify-center gap-1 ${
+                projectSource === 'custom'
+                  ? 'bg-primary text-white'
+                  : 'text-text-muted hover:text-white'
+              }`}
+            >
+              <Cloud className="w-3 h-3" />
+              Outra Pasta
+            </button>
+          </div>
+
+          {/* Custom folder selector */}
+          {projectSource === 'custom' && (
+            <div className="flex items-center justify-between p-2 rounded-lg bg-white/5">
+              <span className="text-[10px] text-text-muted truncate flex-1" title={customPath || undefined}>
+                {customPath ? customPath.split(/[/\\]/).pop() : 'Nenhuma pasta'}
+              </span>
+              <button
+                onClick={handleSelectCustomFolder}
+                className="text-[10px] text-primary hover:text-primary/80 flex items-center gap-1 ml-2"
+              >
+                <FolderOpen className="w-3 h-3" />
+              </button>
+            </div>
+          )}
+
+          {/* Output Name */}
+          <div className="space-y-1">
+            <label className="text-[10px] font-medium text-text-secondary">NOME DO PROJETO</label>
+            <input
+              type="text"
+              value={outputName}
+              onChange={(e) => setOutputName(e.target.value)}
+              placeholder="Automático"
+              className="input w-full text-xs py-1.5"
+            />
+          </div>
+
+          {/* Timeline Preview */}
+          {selectedProjects.length > 0 && (
+            <div className="p-2 rounded-lg bg-white/5 border border-border">
+              <div className="text-[10px] text-text-muted mb-2 flex justify-between">
+                <span>Preview ({selectedProjects.length} projetos)</span>
+                <span>{formatDuration(getTotalDuration())}</span>
+              </div>
+              <div className="h-6 bg-black/30 rounded relative overflow-hidden">
+                {timelineData.map((project, index) => (
+                  <div
+                    key={project.path}
+                    className="absolute h-full flex items-center justify-center overflow-hidden cursor-pointer hover:brightness-125"
+                    style={{
+                      left: `${project.left}%`,
+                      width: `${Math.max(project.width, 1)}%`,
+                      backgroundColor: project.color,
+                    }}
+                    title={`${project.name} (${formatDuration(project.duration)})`}
+                    onClick={() => removeFromSelection(project)}
+                  >
+                    <span className="text-[8px] font-bold text-white">{index + 1}</span>
+                  </div>
+                ))}
+              </div>
+            </div>
+          )}
+
+          {/* Selected Order */}
+          {selectedProjects.length > 0 && (
+            <div className="p-2 rounded-lg bg-white/5 border border-border">
+              <div className="text-[10px] text-text-muted mb-2">Ordem de mesclagem</div>
+              <div className="space-y-1 max-h-28 overflow-y-auto">
+                {selectedProjects.map((project, index) => (
+                  <div key={project.path} className="flex items-center gap-1 text-[10px]">
+                    <span
+                      className="w-4 h-4 flex items-center justify-center font-bold text-white rounded flex-shrink-0"
+                      style={{ backgroundColor: TIMELINE_COLORS[index % TIMELINE_COLORS.length] }}
+                    >
+                      {index + 1}
+                    </span>
+                    <span className="flex-1 text-white truncate">{project.name}</span>
+                    <button onClick={() => moveProject(index, 'up')} disabled={index === 0} className="p-0.5 text-text-muted hover:text-white disabled:opacity-30">
+                      <ChevronUp className="w-3 h-3" />
+                    </button>
+                    <button onClick={() => moveProject(index, 'down')} disabled={index === selectedProjects.length - 1} className="p-0.5 text-text-muted hover:text-white disabled:opacity-30">
+                      <ChevronDown className="w-3 h-3" />
+                    </button>
+                    <button onClick={() => removeFromSelection(project)} className="p-0.5 text-red-400 hover:text-red-300">
+                      <Trash2 className="w-3 h-3" />
+                    </button>
+                  </div>
+                ))}
+              </div>
+            </div>
+          )}
+
+          {/* Merge Mode */}
+          <div className="space-y-2">
+            <label className="text-[10px] font-medium text-text-secondary">MODO DE MESCLAGEM</label>
+            <div className="flex gap-2">
+              <button
+                onClick={() => setMergeMode('flat')}
+                className={`flex-1 p-2 rounded-lg text-left transition-all border ${
+                  mergeMode === 'flat'
+                    ? 'bg-primary/20 border-primary'
+                    : 'bg-white/5 border-transparent hover:bg-white/10 hover:border-white/20'
+                }`}
+              >
+                <div className={`text-xs font-medium ${mergeMode === 'flat' ? 'text-primary' : 'text-white'}`}>
+                  Direto
+                </div>
+                <div className="text-[9px] text-text-muted mt-0.5">
+                  Junta todas as tracks sem separação
+                </div>
+              </button>
+              <button
+                onClick={() => setMergeMode('groups')}
+                className={`flex-1 p-2 rounded-lg text-left transition-all border ${
+                  mergeMode === 'groups'
+                    ? 'bg-primary/20 border-primary'
+                    : 'bg-white/5 border-transparent hover:bg-white/10 hover:border-white/20'
+                }`}
+              >
+                <div className={`text-xs font-medium ${mergeMode === 'groups' ? 'text-primary' : 'text-white'}`}>
+                  Com Grupos
+                </div>
+                <div className="text-[9px] text-text-muted mt-0.5">
+                  Cada projeto fica em seu próprio grupo
+                </div>
+              </button>
+            </div>
+          </div>
+
+          {/* Warning */}
+          {selectedProjects.length === 1 && (
+            <div className="flex items-center gap-2 p-2 rounded-lg bg-yellow-500/10 border border-yellow-500/30">
+              <AlertCircle className="w-3 h-3 text-yellow-400 flex-shrink-0" />
+              <span className="text-[10px] text-yellow-400">Selecione pelo menos 2 projetos</span>
+            </div>
+          )}
+
+          {/* Success message */}
+          <AnimatePresence>
+            {showSuccess && (
+              <motion.div
+                initial={{ opacity: 0, y: -10 }}
+                animate={{ opacity: 1, y: 0 }}
+                exit={{ opacity: 0, y: -10 }}
+                className="p-2 rounded-lg bg-green-500/20 border border-green-500/50"
+              >
+                <div className="flex items-center gap-2">
+                  <Check className="w-3 h-3 text-green-400" />
+                  <span className="text-[10px] text-green-400">"{lastMergedName}" criado!</span>
+                </div>
+              </motion.div>
+            )}
+          </AnimatePresence>
+
+          {/* Merge Button */}
           <button
-            onClick={() => handleCleanSubtitles(currentProjectPath)}
-            disabled={isCleaning}
-            className="w-full py-2 px-3 rounded-lg bg-yellow-500/20 text-xs text-yellow-400 hover:bg-yellow-500/30 transition-colors flex items-center justify-center gap-2 disabled:opacity-50 font-medium"
+            onClick={handleMerge}
+            disabled={selectedProjects.length < 2 || isMerging}
+            className="w-full py-2.5 px-4 bg-primary text-white font-semibold rounded-xl transition-all disabled:opacity-50 disabled:cursor-not-allowed flex items-center justify-center gap-2 hover:brightness-110 text-sm"
           >
-            {isCleaning ? (
+            {isMerging ? (
               <>
-                <span className="w-3 h-3 border-2 border-yellow-400/30 border-t-yellow-400 rounded-full animate-spin" />
-                Corrigindo legendas...
+                <span className="w-4 h-4 border-2 border-white/30 border-t-white rounded-full animate-spin" />
+                Mesclando...
               </>
             ) : (
               <>
-                <Sparkles className="w-3 h-3" />
-                Corrigir Legendas do Projeto
+                <Layers className="w-4 h-4" />
+                Mesclar {selectedProjects.length} Projetos
               </>
             )}
           </button>
-        </div>
-      )}
 
-      {/* Success message with clean button */}
-      <AnimatePresence>
-        {showSuccess && (
-          <motion.div
-            initial={{ opacity: 0, y: -10 }}
-            animate={{ opacity: 1, y: 0 }}
-            exit={{ opacity: 0, y: -10 }}
-            className="p-3 rounded-xl bg-green-500/20 border border-green-500/50 space-y-2"
-          >
-            <div className="flex items-center gap-2">
-              <Check className="w-4 h-4 text-green-400" />
-              <span className="text-sm text-green-400">
-                Projeto "{lastMergedName}" criado com sucesso!
-              </span>
-            </div>
-            <p className="text-[10px] text-green-300/70">
-              Abra no CapCut, feche, e depois corrija as legendas na aba MESCLAR.
-            </p>
-          </motion.div>
-        )}
-      </AnimatePresence>
-
-      {/* Timeline Preview */}
-      {selectedProjects.length > 0 && (
-        <div className="space-y-2">
-          <label className="text-xs font-medium text-text-secondary flex items-center gap-2">
-            <Play className="w-3 h-3" />
-            PREVIEW DA TIMELINE
-          </label>
-          <div className="p-2 rounded-xl bg-white/5 border border-border">
-            {/* Timeline bar */}
-            <div className="h-8 bg-black/30 rounded relative overflow-hidden">
-              {timelineData.map((project, index) => (
-                <div
-                  key={project.path}
-                  className="absolute h-full flex items-center justify-center overflow-hidden transition-all cursor-pointer hover:brightness-125"
-                  style={{
-                    left: `${project.left}%`,
-                    width: `${Math.max(project.width, 1)}%`,
-                    backgroundColor: project.color,
-                  }}
-                  title={`${project.name} (${formatDuration(project.duration)})`}
-                  onClick={() => removeFromSelection(project)}
-                >
-                  <span className="text-[9px] font-medium text-white truncate px-1 drop-shadow">
-                    {project.width > 15 ? project.name.substring(0, Math.floor(project.width / 5)) : (index + 1)}
-                  </span>
-                </div>
-              ))}
-            </div>
-            {/* Time markers */}
-            <div className="flex justify-between text-[9px] text-text-muted mt-1 px-1">
-              <span>0:00</span>
-              <span>{formatDuration(getTotalDuration())}</span>
-            </div>
-          </div>
-        </div>
-      )}
-
-      {/* Selected projects (order list) */}
-      {selectedProjects.length > 0 && (
-        <div className="space-y-2">
-          <label className="text-xs font-medium text-text-secondary flex items-center gap-2">
-            ORDEM ({selectedProjects.length} projetos • {formatDuration(getTotalDuration())})
-          </label>
-          <div className="space-y-1 p-2 rounded-xl bg-white/5 border border-border max-h-32 overflow-y-auto">
-            {selectedProjects.map((project, index) => (
-              <div
-                key={project.path}
-                className="flex items-center gap-2 p-1.5 rounded-lg hover:bg-white/5"
-              >
-                <span
-                  className="w-4 h-4 flex items-center justify-center text-[10px] font-bold text-white rounded flex-shrink-0"
-                  style={{ backgroundColor: TIMELINE_COLORS[index % TIMELINE_COLORS.length] }}
-                >
-                  {index + 1}
-                </span>
-                <span className="flex-1 text-xs text-white truncate" title={project.name}>
-                  {project.name}
-                </span>
-                <span className="text-[10px] text-text-muted flex-shrink-0">
-                  {formatDuration(project.duration)}
-                </span>
-                <div className="flex items-center gap-0.5 flex-shrink-0">
-                  <button
-                    onClick={() => moveProject(index, 'up')}
-                    disabled={index === 0}
-                    className="p-0.5 text-text-muted hover:text-white disabled:opacity-30 disabled:cursor-not-allowed"
-                    title="Mover para cima"
-                  >
-                    <ChevronUp className="w-3 h-3" />
-                  </button>
-                  <button
-                    onClick={() => moveProject(index, 'down')}
-                    disabled={index === selectedProjects.length - 1}
-                    className="p-0.5 text-text-muted hover:text-white disabled:opacity-30 disabled:cursor-not-allowed"
-                    title="Mover para baixo"
-                  >
-                    <ChevronDown className="w-3 h-3" />
-                  </button>
-                  <button
-                    onClick={() => removeFromSelection(project)}
-                    className="p-0.5 text-red-400 hover:text-red-300"
-                    title="Remover"
-                  >
-                    <Trash2 className="w-3 h-3" />
-                  </button>
-                </div>
-              </div>
-            ))}
-          </div>
-        </div>
-      )}
-
-      {/* Available projects */}
-      <div className="space-y-2">
-        <label className="text-xs font-medium text-text-secondary flex items-center gap-2">
-          <FolderOpen className="w-3 h-3" />
-          PROJETOS DISPONÍVEIS ({availableProjects.length})
-        </label>
-        <div className="space-y-1 max-h-40 overflow-y-auto p-2 rounded-xl bg-white/5 border border-border">
-          {isLoading ? (
-            <div className="flex items-center justify-center py-4">
-              <span className="w-4 h-4 border-2 border-primary/30 border-t-primary rounded-full animate-spin" />
-            </div>
-          ) : projectSource === 'custom' && !customPath ? (
-            <div className="text-center py-6">
-              <Cloud className="w-8 h-8 text-primary mx-auto mb-2 opacity-30" />
-              <p className="text-xs text-text-muted">Selecione uma pasta</p>
-              <p className="text-[10px] text-text-muted">para ver os projetos</p>
-              <button
-                onClick={handleSelectCustomFolder}
-                className="mt-3 text-[10px] px-3 py-1.5 bg-primary/20 text-primary rounded-lg hover:bg-primary/30 transition-colors"
-              >
-                Selecionar pasta
-              </button>
-            </div>
-          ) : availableProjects.length === 0 ? (
-            <div className="flex items-center justify-center py-4 text-xs text-text-muted">
-              {currentProjects.length === 0 ? 'Nenhum projeto encontrado' : 'Todos os projetos selecionados'}
-            </div>
-          ) : (
-            availableProjects.map((project) => (
-              <button
-                key={project.path}
-                onClick={() => toggleProjectSelection(project)}
-                className="w-full flex items-center gap-2 p-2 rounded-lg hover:bg-white/5 transition-colors text-left group"
-              >
-                <div className="w-4 h-4 rounded border border-border-light flex items-center justify-center group-hover:border-primary flex-shrink-0">
-                  <span className="text-[10px] text-primary opacity-0 group-hover:opacity-100">+</span>
-                </div>
-                <span className="flex-1 text-xs text-white truncate" title={project.name}>
-                  {project.name}
-                </span>
-                <div className="flex items-center gap-1 text-[10px] text-text-muted flex-shrink-0">
-                  <Clock className="w-3 h-3" />
-                  {formatDuration(project.duration)}
-                </div>
-              </button>
-            ))
+          {/* Clean Subtitles Button */}
+          {currentProjectPath && (
+            <button
+              onClick={() => handleCleanSubtitles(currentProjectPath)}
+              disabled={isCleaning}
+              className="w-full py-2 px-3 rounded-lg bg-yellow-500/10 border border-yellow-500/30 text-[10px] text-yellow-400 hover:bg-yellow-500/20 transition-colors flex items-center justify-center gap-2 disabled:opacity-50"
+            >
+              {isCleaning ? (
+                <>
+                  <span className="w-3 h-3 border-2 border-yellow-400/30 border-t-yellow-400 rounded-full animate-spin" />
+                  Corrigindo...
+                </>
+              ) : (
+                <>
+                  <Sparkles className="w-3 h-3" />
+                  Corrigir Legendas
+                </>
+              )}
+            </button>
           )}
         </div>
       </div>
-
-      {/* Merge mode toggle */}
-      <div className="space-y-2">
-        <label className="text-xs font-medium text-text-secondary">MODO DE MESCLAGEM</label>
-        <div className="flex gap-2">
-          <button
-            onClick={() => setMergeMode('flat')}
-            className={`flex-1 py-2 px-3 rounded-lg text-xs font-medium transition-all ${
-              mergeMode === 'flat'
-                ? 'bg-primary text-white'
-                : 'bg-white/5 text-text-muted hover:bg-white/10'
-            }`}
-          >
-            Direto (legendas OK)
-          </button>
-          <button
-            onClick={() => setMergeMode('groups')}
-            className={`flex-1 py-2 px-3 rounded-lg text-xs font-medium transition-all ${
-              mergeMode === 'groups'
-                ? 'bg-primary text-white'
-                : 'bg-white/5 text-text-muted hover:bg-white/10'
-            }`}
-          >
-            Com Grupos
-          </button>
-        </div>
-        <p className="text-[10px] text-text-muted">
-          {mergeMode === 'flat'
-            ? 'Todas as tracks ficam direto na timeline. Legendas funcionam normalmente.'
-            : 'Cada projeto vira um Clipe Composto. Legendas podem aparecer como JSON.'}
-        </p>
-      </div>
-
-      {/* Output name */}
-      <div className="space-y-2">
-        <label className="text-xs font-medium text-text-secondary">NOME DO PROJETO FINAL</label>
-        <input
-          type="text"
-          value={outputName}
-          onChange={(e) => setOutputName(e.target.value)}
-          placeholder="Deixe vazio para gerar automaticamente"
-          className="input w-full text-sm"
-        />
-      </div>
-
-      {/* Warning */}
-      {selectedProjects.length === 1 && (
-        <div className="flex items-center gap-2 p-2 rounded-lg bg-yellow-500/10 border border-yellow-500/30">
-          <AlertCircle className="w-4 h-4 text-yellow-400 flex-shrink-0" />
-          <span className="text-xs text-yellow-400">Selecione pelo menos 2 projetos para mesclar</span>
-        </div>
-      )}
-
-      {/* Merge button */}
-      <button
-        onClick={handleMerge}
-        disabled={selectedProjects.length < 2 || isMerging}
-        className="w-full py-3 px-4 bg-primary text-white font-semibold rounded-xl transition-all disabled:opacity-50 disabled:cursor-not-allowed flex items-center justify-center gap-2 hover:brightness-110"
-      >
-        {isMerging ? (
-          <>
-            <span className="w-4 h-4 border-2 border-white/30 border-t-white rounded-full animate-spin" />
-            Mesclando...
-          </>
-        ) : (
-          <>
-            <Layers className="w-4 h-4" />
-            Mesclar {selectedProjects.length} Projetos
-          </>
-        )}
-      </button>
-
-      {/* Info */}
-      <p className="text-[10px] text-text-muted text-center">
-        Cada projeto será convertido em um grupo (Clipe Composto) no projeto final
-      </p>
     </div>
   )
 }

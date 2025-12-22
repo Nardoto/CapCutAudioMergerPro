@@ -28,20 +28,59 @@ const TRIAL_DAYS = 10
 const ALLOWED_PLANS = ['basic', 'vip']
 
 /**
- * Calcula status do trial baseado no createdAt (mesmo método do CapCut-Automator)
+ * Extrai timestamp de diferentes formatos do Firestore
  */
-function calculateTrialStatus(createdAt: string | { _seconds: number } | number | null): { isActive: boolean; daysRemaining: number } {
-  if (!createdAt) {
-    return { isActive: false, daysRemaining: 0 }
+function extractTimestamp(value: unknown): number | null {
+  if (!value) return null
+
+  // String ISO date
+  if (typeof value === 'string') {
+    const ts = new Date(value).getTime()
+    return isNaN(ts) ? null : ts
   }
 
-  let createdTimestamp: number
-  if (typeof createdAt === 'string') {
-    createdTimestamp = new Date(createdAt).getTime()
-  } else if (typeof createdAt === 'object' && '_seconds' in createdAt) {
-    createdTimestamp = createdAt._seconds * 1000
-  } else {
-    createdTimestamp = createdAt as number
+  // Number (already timestamp in ms)
+  if (typeof value === 'number') {
+    return value
+  }
+
+  // Firestore Timestamp object
+  if (typeof value === 'object' && value !== null) {
+    const obj = value as Record<string, unknown>
+
+    // Format: { seconds: number } or { _seconds: number }
+    if ('seconds' in obj && typeof obj.seconds === 'number') {
+      return obj.seconds * 1000
+    }
+    if ('_seconds' in obj && typeof obj._seconds === 'number') {
+      return obj._seconds * 1000
+    }
+
+    // Firestore Timestamp with toDate method
+    if ('toDate' in obj && typeof obj.toDate === 'function') {
+      try {
+        return (obj.toDate as () => Date)().getTime()
+      } catch {
+        return null
+      }
+    }
+  }
+
+  return null
+}
+
+/**
+ * Calcula status do trial baseado no createdAt (mesmo método do CapCut-Automator)
+ */
+function calculateTrialStatus(createdAt: unknown): { isActive: boolean; daysRemaining: number } {
+  const createdTimestamp = extractTimestamp(createdAt)
+
+  console.log('[TRIAL DEBUG] createdAt raw:', createdAt)
+  console.log('[TRIAL DEBUG] createdTimestamp:', createdTimestamp)
+
+  if (!createdTimestamp) {
+    console.log('[TRIAL DEBUG] No valid timestamp - trial inactive')
+    return { isActive: false, daysRemaining: 0 }
   }
 
   const now = Date.now()
@@ -49,6 +88,10 @@ function calculateTrialStatus(createdAt: string | { _seconds: number } | number 
   const trialExpiresAt = createdTimestamp + trialDurationMs
   const timeRemaining = trialExpiresAt - now
   const daysRemaining = Math.ceil(timeRemaining / (24 * 60 * 60 * 1000))
+
+  console.log('[TRIAL DEBUG] now:', now, 'expiresAt:', trialExpiresAt)
+  console.log('[TRIAL DEBUG] timeRemaining:', timeRemaining, 'daysRemaining:', daysRemaining)
+  console.log('[TRIAL DEBUG] isActive:', timeRemaining > 0)
 
   return {
     isActive: timeRemaining > 0,
@@ -94,7 +137,8 @@ export async function signInWithGoogle(): Promise<User | null> {
     }
 
     // Usuário existe - atualizar lastLoginAt
-    console.log('Usuário encontrado - verificando acesso')
+    console.log('[AUTH DEBUG] Usuário encontrado - verificando acesso')
+    console.log('[AUTH DEBUG] userData:', JSON.stringify(userData, null, 2))
     try {
       await updateDoc(userRef, {
         lastLoginAt: new Date().toISOString()
@@ -105,26 +149,68 @@ export async function signInWithGoogle(): Promise<User | null> {
 
     // Calcular acesso baseado nos dados do Firestore
     const plan = userData?.plan || 'free'
-    const isPro = userData?.isPro || false
     const features = userData?.features || []
-    const createdAt = userData?.createdAt
+    // Usar proActivatedAt para calcular trial (não createdAt)
+    const proActivatedAt = userData?.proActivatedAt
+    const trialExpiresAt = userData?.trialExpiresAt
 
-    // Verificar se tem acesso: plano pago OU isPro OU feature específica OU trial ativo
-    const hasPaidPlan = ALLOWED_PLANS.includes(plan)
+    console.log('[AUTH DEBUG] plan:', plan)
+    console.log('[AUTH DEBUG] features:', features)
+    console.log('[AUTH DEBUG] proActivatedAt:', proActivatedAt)
+    console.log('[AUTH DEBUG] trialExpiresAt:', trialExpiresAt)
+
+    // Verificar se tem acesso
+    const hasPaidPlan = ALLOWED_PLANS.includes(plan) // basic ou vip
     const hasFeature = features.includes('capcut-sync-pro') || features.includes('all-features')
-    const trialStatus = calculateTrialStatus(createdAt)
 
-    // Determinar acesso
+    // Para trial, calcular baseado em proActivatedAt OU verificar trialExpiresAt diretamente
+    let trialStatus = { isActive: false, daysRemaining: 0 }
+    if (plan === 'trial') {
+      // Se tem trialExpiresAt, usar diretamente
+      if (trialExpiresAt) {
+        const expiresTimestamp = new Date(trialExpiresAt).getTime()
+        const now = Date.now()
+        const timeRemaining = expiresTimestamp - now
+        trialStatus = {
+          isActive: timeRemaining > 0,
+          daysRemaining: Math.max(0, Math.ceil(timeRemaining / (24 * 60 * 60 * 1000)))
+        }
+        console.log('[AUTH DEBUG] Trial calculado via trialExpiresAt:', trialStatus)
+      } else if (proActivatedAt) {
+        // Fallback: calcular baseado em proActivatedAt
+        trialStatus = calculateTrialStatus(proActivatedAt)
+        console.log('[AUTH DEBUG] Trial calculado via proActivatedAt:', trialStatus)
+      }
+    }
+
+    console.log('[AUTH DEBUG] hasPaidPlan:', hasPaidPlan)
+    console.log('[AUTH DEBUG] hasFeature:', hasFeature)
+    console.log('[AUTH DEBUG] trialStatus:', trialStatus)
+
+    // Determinar acesso - IMPORTANTE: trial expirado NÃO dá acesso!
     let hasAccess = false
     let proActivatedBy = ''
 
-    if (hasPaidPlan || isPro || hasFeature) {
+    if (hasPaidPlan || hasFeature) {
+      // Plano pago (basic/vip) ou feature específica
       hasAccess = true
-      proActivatedBy = 'pro'
-    } else if (trialStatus.isActive) {
+      proActivatedBy = plan // 'basic' ou 'vip'
+      console.log('[AUTH DEBUG] Acesso concedido via plano pago:', plan)
+    } else if (plan === 'trial' && trialStatus.isActive) {
+      // Trial ATIVO
       hasAccess = true
       proActivatedBy = 'trial'
+      console.log('[AUTH DEBUG] Acesso concedido via TRIAL ativo')
+    } else if (plan === 'trial' && !trialStatus.isActive) {
+      // Trial EXPIRADO - SEM ACESSO
+      hasAccess = false
+      proActivatedBy = 'trial_expired'
+      console.log('[AUTH DEBUG] SEM ACESSO - trial expirado!')
+    } else {
+      console.log('[AUTH DEBUG] SEM ACESSO - sem plano válido')
     }
+
+    console.log('[AUTH DEBUG] RESULTADO FINAL: hasAccess=', hasAccess, 'proActivatedBy=', proActivatedBy)
 
     return {
       uid: firebaseUser.uid,
@@ -132,11 +218,11 @@ export async function signInWithGoogle(): Promise<User | null> {
       displayName: firebaseUser.displayName,
       photoURL: firebaseUser.photoURL,
       isPro: hasAccess,
+      plan: plan,
       proActivatedBy: proActivatedBy,
-      proActivatedAt: createdAt,
-      trialExpiresAt: trialStatus.isActive
-        ? new Date(new Date(createdAt).getTime() + TRIAL_DAYS * 24 * 60 * 60 * 1000).toISOString()
-        : undefined,
+      proActivatedAt: proActivatedAt,
+      trialExpiresAt: trialExpiresAt,
+      trialDaysRemaining: trialStatus.daysRemaining,
     }
   } catch (error) {
     console.error('Error signing in with Google:', error)
@@ -149,34 +235,47 @@ export async function logOut(): Promise<void> {
   await signOut(auth)
 }
 
-// Check if user has valid PRO access (compatível com CapCut-Automator)
+// Check if user has valid access
 export function checkProAccess(user: User): { hasAccess: boolean; reason: string; daysRemaining?: number } {
-  // Se isPro é true (calculado no login), tem acesso
-  if (user.isPro) {
-    if (user.proActivatedBy === 'trial' && user.trialExpiresAt) {
-      const expiresAt = new Date(user.trialExpiresAt)
-      const now = new Date()
-      if (expiresAt < now) {
-        return { hasAccess: false, reason: 'Seu período de teste de 10 dias expirou. Faça upgrade para BÁSICO ou VIP!' }
+  // Se é trial, SEMPRE verificar se expirou (recalcular baseado no proActivatedAt/createdAt)
+  if (user.proActivatedBy === 'trial') {
+    // Calcular expiração baseado na data de criação
+    const createdAt = user.proActivatedAt
+    if (createdAt) {
+      const trialStatus = calculateTrialStatusFromDate(createdAt)
+      if (!trialStatus.isActive) {
+        return { hasAccess: false, reason: 'Seu período de teste expirou. Faça upgrade para o plano VIP!' }
       }
-      const daysRemaining = Math.ceil((expiresAt.getTime() - now.getTime()) / (24 * 60 * 60 * 1000))
-      return { hasAccess: true, reason: `Trial: ${daysRemaining} dias restantes`, daysRemaining }
+      return { hasAccess: true, reason: `Trial: ${trialStatus.daysRemaining} dias restantes`, daysRemaining: trialStatus.daysRemaining }
     }
-    return { hasAccess: true, reason: 'Acesso PRO ativo' }
+    // Se não tem data de criação, trial inválido
+    return { hasAccess: false, reason: 'Período de teste inválido. Faça upgrade para o plano VIP!' }
   }
 
-  return { hasAccess: false, reason: 'Você não tem acesso. Faça upgrade para BÁSICO ou VIP!' }
+  // Se isPro é true e não é trial, tem acesso VIP
+  if (user.isPro) {
+    return { hasAccess: true, reason: 'Acesso VIP ativo' }
+  }
+
+  return { hasAccess: false, reason: 'Você não tem acesso. Faça upgrade para o plano VIP!' }
+}
+
+// Helper function to calculate trial status from a date (used by checkProAccess)
+function calculateTrialStatusFromDate(createdAt: unknown): { isActive: boolean; daysRemaining: number } {
+  // Usa a mesma função de extração para garantir consistência
+  return calculateTrialStatus(createdAt)
 }
 
 // Subscribe to auth state changes
 export function onAuthChange(callback: (user: User | null) => void): () => void {
   return onAuthStateChanged(auth, async (firebaseUser: FirebaseUser | null) => {
     if (firebaseUser) {
+      console.log('[AUTH CHANGE] Verificando usuário:', firebaseUser.email)
       const userDocSnap = await getDoc(doc(db, 'users', firebaseUser.uid))
       const userData = userDocSnap.data()
 
       if (!userData) {
-        // Usuário autenticado mas sem dados no Firestore
+        console.log('[AUTH CHANGE] Sem dados no Firestore - sem acesso')
         callback({
           uid: firebaseUser.uid,
           email: firebaseUser.email || '',
@@ -187,26 +286,58 @@ export function onAuthChange(callback: (user: User | null) => void): () => void 
         return
       }
 
-      // Calcular acesso
+      // Calcular acesso baseado nos dados do Firestore
       const plan = userData.plan || 'free'
-      const isPro = userData.isPro || false
       const features = userData.features || []
-      const createdAt = userData.createdAt
+      const proActivatedAt = userData.proActivatedAt
+      const trialExpiresAt = userData.trialExpiresAt
 
-      const hasPaidPlan = ALLOWED_PLANS.includes(plan)
+      console.log('[AUTH CHANGE] userData:', { plan, features, proActivatedAt, trialExpiresAt })
+
+      const hasPaidPlan = ALLOWED_PLANS.includes(plan) // basic ou vip
       const hasFeature = features.includes('capcut-sync-pro') || features.includes('all-features')
-      const trialStatus = calculateTrialStatus(createdAt)
 
+      // Para trial, calcular baseado em trialExpiresAt ou proActivatedAt
+      let trialStatus = { isActive: false, daysRemaining: 0 }
+      if (plan === 'trial') {
+        if (trialExpiresAt) {
+          const expiresTimestamp = new Date(trialExpiresAt).getTime()
+          const now = Date.now()
+          const timeRemaining = expiresTimestamp - now
+          trialStatus = {
+            isActive: timeRemaining > 0,
+            daysRemaining: Math.max(0, Math.ceil(timeRemaining / (24 * 60 * 60 * 1000)))
+          }
+          console.log('[AUTH CHANGE] Trial via trialExpiresAt:', trialStatus)
+        } else if (proActivatedAt) {
+          trialStatus = calculateTrialStatus(proActivatedAt)
+          console.log('[AUTH CHANGE] Trial via proActivatedAt:', trialStatus)
+        }
+      }
+
+      console.log('[AUTH CHANGE] Checks:', { hasPaidPlan, hasFeature, trialStatus })
+
+      // Determinar acesso - IMPORTANTE: trial expirado NÃO dá acesso!
       let hasAccess = false
       let proActivatedBy = ''
 
-      if (hasPaidPlan || isPro || hasFeature) {
+      if (hasPaidPlan || hasFeature) {
         hasAccess = true
-        proActivatedBy = 'pro'
-      } else if (trialStatus.isActive) {
+        proActivatedBy = plan // 'basic' ou 'vip'
+        console.log('[AUTH CHANGE] Acesso via plano pago:', plan)
+      } else if (plan === 'trial' && trialStatus.isActive) {
         hasAccess = true
         proActivatedBy = 'trial'
+        console.log('[AUTH CHANGE] Acesso via TRIAL ativo')
+      } else if (plan === 'trial' && !trialStatus.isActive) {
+        hasAccess = false
+        proActivatedBy = 'trial_expired'
+        console.log('[AUTH CHANGE] SEM ACESSO - trial expirado!')
+      } else {
+        console.log('[AUTH CHANGE] SEM ACESSO - sem plano válido')
       }
+
+      console.log('[AUTH CHANGE] RESULTADO:', { hasAccess, proActivatedBy })
 
       callback({
         uid: firebaseUser.uid,
@@ -214,13 +345,14 @@ export function onAuthChange(callback: (user: User | null) => void): () => void 
         displayName: firebaseUser.displayName,
         photoURL: firebaseUser.photoURL,
         isPro: hasAccess,
+        plan: plan,
         proActivatedBy: proActivatedBy,
-        proActivatedAt: createdAt,
-        trialExpiresAt: trialStatus.isActive && createdAt
-          ? new Date(new Date(createdAt).getTime() + TRIAL_DAYS * 24 * 60 * 60 * 1000).toISOString()
-          : undefined,
+        proActivatedAt: proActivatedAt,
+        trialExpiresAt: trialExpiresAt,
+        trialDaysRemaining: trialStatus.daysRemaining,
       })
     } else {
+      console.log('[AUTH CHANGE] Usuário deslogado')
       callback(null)
     }
   })

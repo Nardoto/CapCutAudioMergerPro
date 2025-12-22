@@ -7,7 +7,7 @@ const url = require('node:url');
 const { execSync, spawn } = require('node:child_process');
 
 // App version
-const APP_VERSION = '2.0.0';
+const APP_VERSION = '3.2.0';
 const UPDATE_URL = 'https://nardoto.com.br/nardoto-updates/capcut-sync-pro-version.json';
 
 // Settings file path
@@ -218,6 +218,33 @@ ipcMain.handle('select-folder', async () => {
   return { path: folderPath, name: path.basename(folderPath), draftPath: draftContentPath };
 });
 
+// Select output folder (generic - for saving files)
+ipcMain.handle('select-output-folder', async (event) => {
+  try {
+    // Get the window from the event or use mainWindow as fallback
+    const win = BrowserWindow.fromWebContents(event.sender) || mainWindow;
+    if (!win) return null;
+
+    const settings = loadSettings();
+    const result = await dialog.showOpenDialog(win, {
+      properties: ['openDirectory'],
+      title: 'Selecione a pasta de saida',
+      defaultPath: settings.lastOutputPath || undefined,
+    });
+    if (result.canceled || result.filePaths.length === 0) return null;
+    const folderPath = result.filePaths[0];
+    // Save last path
+    try {
+      saveSettings({ ...settings, lastOutputPath: folderPath });
+    } catch (e) {
+      // Silently ignore save errors
+    }
+    return folderPath;
+  } catch (error) {
+    return null;
+  }
+});
+
 // Select root folder containing multiple projects (for merge)
 ipcMain.handle('select-projects-folder', async () => {
   if (!mainWindow) return { canceled: true };
@@ -401,6 +428,31 @@ ipcMain.handle('window-close', () => mainWindow?.close());
 ipcMain.handle('open-external', async (_, url) => await shell.openExternal(url));
 ipcMain.handle('open-folder-in-explorer', async (_, folderPath) => await shell.openPath(folderPath));
 
+// ============ FILE UTILS ============
+ipcMain.handle('read-file-content', async (_, filePath) => {
+  try {
+    if (fs.existsSync(filePath)) {
+      return fs.readFileSync(filePath, 'utf-8');
+    }
+    return null;
+  } catch (e) {
+    console.error('Error reading file:', e);
+    return null;
+  }
+});
+
+ipcMain.handle('list-folder-files', async (_, folderPath) => {
+  try {
+    if (fs.existsSync(folderPath)) {
+      return fs.readdirSync(folderPath);
+    }
+    return [];
+  } catch (e) {
+    console.error('Error listing folder:', e);
+    return [];
+  }
+});
+
 // ============ CAPCUT LAUNCHER ============
 function findCapCutExe() {
   // Tenta encontrar o CapCut em locais comuns
@@ -443,6 +495,56 @@ function generateUUID() {
   });
 }
 
+// Ensure all project files use the same draft_id (fixes CapCut visibility issues)
+function ensureConsistentDraftId(projectPath, capCutDrafts) {
+  try {
+    const draftContentPath = path.join(projectPath, 'draft_content.json');
+    const draftInfoPath = path.join(projectPath, 'draft_info.json');
+    const draftMetaInfoPath = path.join(projectPath, 'draft_meta_info.json');
+    const rootMetaPath = path.join(capCutDrafts, 'root_meta_info.json');
+
+    // Use the ID from draft_content.json as the authoritative ID
+    if (!fs.existsSync(draftContentPath)) return;
+    const draftContent = JSON.parse(fs.readFileSync(draftContentPath, 'utf-8'));
+    const correctId = draftContent.id;
+    if (!correctId) return;
+
+    // Fix draft_info.json if needed
+    if (fs.existsSync(draftInfoPath)) {
+      const draftInfo = JSON.parse(fs.readFileSync(draftInfoPath, 'utf-8'));
+      if (draftInfo.draft_id !== correctId) {
+        draftInfo.draft_id = correctId;
+        fs.writeFileSync(draftInfoPath, JSON.stringify(draftInfo, null, 2));
+        console.log('[ID Fix] draft_info.json updated');
+      }
+    }
+
+    // Fix draft_meta_info.json if needed
+    if (fs.existsSync(draftMetaInfoPath)) {
+      const draftMetaInfo = JSON.parse(fs.readFileSync(draftMetaInfoPath, 'utf-8'));
+      if (draftMetaInfo.draft_id !== correctId) {
+        draftMetaInfo.draft_id = correctId;
+        fs.writeFileSync(draftMetaInfoPath, JSON.stringify(draftMetaInfo));
+        console.log('[ID Fix] draft_meta_info.json updated');
+      }
+    }
+
+    // Fix root_meta_info.json if needed
+    if (fs.existsSync(rootMetaPath)) {
+      const rootMeta = JSON.parse(fs.readFileSync(rootMetaPath, 'utf-8'));
+      const projectName = path.basename(projectPath);
+      const entry = rootMeta.all_draft_store.find(d => d.draft_name === projectName);
+      if (entry && entry.draft_id !== correctId) {
+        entry.draft_id = correctId;
+        fs.writeFileSync(rootMetaPath, JSON.stringify(rootMeta));
+        console.log('[ID Fix] root_meta_info.json updated');
+      }
+    }
+  } catch (e) {
+    console.error('[ID Fix] Error:', e.message);
+  }
+}
+
 ipcMain.handle('create-new-project', async () => {
   try {
     const capCutDrafts = path.join(app.getPath('appData'), '..', 'Local', 'CapCut', 'User Data', 'Projects', 'com.lveditor.draft');
@@ -459,7 +561,7 @@ ipcMain.handle('create-new-project', async () => {
     fs.mkdirSync(projectPath, { recursive: true });
 
     const draftContent = {
-      canvas_config: { height: 1920, width: 1080, ratio: "original" },
+      canvas_config: { height: 1080, width: 1920, ratio: "16:9" },
       color_space: 0,
       config: { adjust_max_index: 0, attachment_info: [], combination_max_index: 0, export_range: null, extract_audio_last_index: 0, lyrics_recognition_id: "", lyrics_sync: false, maintrack_adsorb: true, material_save_mode: 0, original_sound_last_index: 0, record_audio_last_index: 0, sticker_max_index: 0, subtitle_recognition_id: "", subtitle_sync: true, system_font_list: [], video_mute: false, zoom_info_params: null },
       cover: null, create_time: Math.floor(timestamp / 1000), duration: 0, extra_info: null, fps: 30.0,
@@ -557,6 +659,9 @@ ipcMain.handle('create-new-project', async () => {
     rootMeta.all_draft_store.unshift(newDraftEntry);
     rootMeta.draft_ids = (rootMeta.draft_ids || 0) + 1;
     fs.writeFileSync(rootMetaPath, JSON.stringify(rootMeta));
+
+    // Ensure all project files use consistent draft_id
+    ensureConsistentDraftId(projectPath, capCutDrafts);
 
     return { success: true, path: projectPath, name: projectName, draftPath: draftPath };
   } catch (error) {
@@ -833,6 +938,61 @@ ipcMain.handle('delete-project', async (_, { projectPath }) => {
   }
 });
 
+// ============ DELETE MULTIPLE PROJECTS ============
+ipcMain.handle('delete-multiple-projects', async (_, { projectPaths }) => {
+  try {
+    if (!projectPaths || projectPaths.length === 0) {
+      return { error: 'Nenhum projeto selecionado' };
+    }
+
+    const capCutDrafts = path.join(app.getPath('appData'), '..', 'Local', 'CapCut', 'User Data', 'Projects', 'com.lveditor.draft');
+    const rootMetaPath = path.join(capCutDrafts, 'root_meta_info.json');
+
+    const deleted = [];
+    const errors = [];
+
+    // Read root_meta_info once
+    let rootMeta = { all_draft_store: [] };
+    if (fs.existsSync(rootMetaPath)) {
+      rootMeta = JSON.parse(fs.readFileSync(rootMetaPath, 'utf-8'));
+    }
+
+    for (const projectPath of projectPaths) {
+      try {
+        if (!fs.existsSync(projectPath)) {
+          errors.push({ path: projectPath, error: 'Não encontrado' });
+          continue;
+        }
+
+        const projectName = path.basename(projectPath);
+
+        // Remove from root_meta_info
+        rootMeta.all_draft_store = (rootMeta.all_draft_store || []).filter(
+          d => !d.draft_fold_path?.includes(projectName)
+        );
+
+        // Delete project folder
+        fs.rmSync(projectPath, { recursive: true, force: true });
+        deleted.push(projectName);
+      } catch (e) {
+        errors.push({ path: projectPath, error: e.message });
+      }
+    }
+
+    // Save root_meta_info once
+    fs.writeFileSync(rootMetaPath, JSON.stringify(rootMeta));
+
+    return {
+      success: true,
+      deletedCount: deleted.length,
+      deleted,
+      errors: errors.length > 0 ? errors : undefined
+    };
+  } catch (error) {
+    return { error: error.message };
+  }
+});
+
 // ============ DELETE TRACKS BY TYPE ============
 ipcMain.handle('delete-tracks-by-type', async (_, { draftPath, trackTypes }) => {
   try {
@@ -1037,6 +1197,266 @@ ipcMain.handle('insert-srt-batch', async (_, { draftPath, srtFiles, createTitle,
 // ============ INSERT MEDIA BATCH (video/image) ============
 ipcMain.handle('run-python', async (_, command) => {
   return runPython(command);
+});
+
+// ============ CONTENT CREATOR (Google AI) ============
+// Armazena processos em execucao
+const runningGenerations = new Map();
+
+// Inicia a geracao e retorna o progressFile imediatamente
+ipcMain.handle('start-content-generation', async (_, params) => {
+  const basePath = app.isPackaged
+    ? process.resourcesPath
+    : process.cwd();
+
+  const pythonScript = path.join(basePath, 'python', 'content_creator.py');
+  const timestamp = Date.now();
+  const progressFile = path.join(app.getPath('temp'), `content_progress_${timestamp}.json`);
+  const tempFile = path.join(app.getPath('temp'), `content_cmd_${timestamp}.json`);
+
+  // Adicionar arquivo de progresso aos params
+  params.progressFile = progressFile;
+  params.action = 'generate';
+
+  // Criar arquivo de progresso inicial
+  fs.writeFileSync(progressFile, JSON.stringify({ progress: 0, status: 'Iniciando...' }));
+  fs.writeFileSync(tempFile, JSON.stringify(params));
+
+  // Iniciar processo Python
+  const pythonProcess = spawn('python', [pythonScript, '--file', tempFile], {
+    encoding: 'utf-8'
+  });
+
+  let stdout = '';
+  let stderr = '';
+
+  pythonProcess.stdout.on('data', (data) => {
+    stdout += data.toString();
+  });
+
+  pythonProcess.stderr.on('data', (data) => {
+    stderr += data.toString();
+  });
+
+  // Criar promise para aguardar resultado
+  const resultPromise = new Promise((resolve) => {
+    pythonProcess.on('close', (code) => {
+      // Limpar arquivo de comando
+      try { fs.unlinkSync(tempFile); } catch {}
+
+      if (code === 0 && stdout) {
+        try {
+          resolve(JSON.parse(stdout.trim()));
+        } catch {
+          resolve({ success: false, error: 'Failed to parse response' });
+        }
+      } else {
+        resolve({ success: false, error: stderr || 'Process failed' });
+      }
+    });
+  });
+
+  // Armazenar processo
+  runningGenerations.set(progressFile, { process: pythonProcess, resultPromise, tempFile });
+
+  return progressFile;
+});
+
+// Aguarda a geracao terminar e retorna o resultado
+ipcMain.handle('wait-content-generation', async (_, progressFile) => {
+  const generation = runningGenerations.get(progressFile);
+  if (!generation) {
+    return { success: false, error: 'Generation not found' };
+  }
+
+  try {
+    const result = await generation.resultPromise;
+    // Limpar arquivo de progresso
+    try { fs.unlinkSync(progressFile); } catch {}
+    runningGenerations.delete(progressFile);
+    return result;
+  } catch (error) {
+    return { success: false, error: error.message };
+  }
+});
+
+// Handler antigo para compatibilidade
+ipcMain.handle('generate-content', async (_, params) => {
+  const basePath = app.isPackaged
+    ? process.resourcesPath
+    : process.cwd();
+
+  const pythonScript = path.join(basePath, 'python', 'content_creator.py');
+  const progressFile = path.join(app.getPath('temp'), `content_progress_${Date.now()}.json`);
+
+  params.progressFile = progressFile;
+  params.action = 'generate';
+
+  fs.writeFileSync(progressFile, JSON.stringify({ progress: 0, status: 'Iniciando...' }));
+
+  return new Promise((resolve) => {
+    const tempFile = path.join(app.getPath('temp'), `content_cmd_${Date.now()}.json`);
+    fs.writeFileSync(tempFile, JSON.stringify(params));
+
+    const pythonProcess = spawn('python', [pythonScript, '--file', tempFile], {
+      encoding: 'utf-8'
+    });
+
+    let stdout = '';
+    let stderr = '';
+
+    pythonProcess.stdout.on('data', (data) => { stdout += data.toString(); });
+    pythonProcess.stderr.on('data', (data) => { stderr += data.toString(); });
+
+    pythonProcess.on('close', (code) => {
+      try { fs.unlinkSync(tempFile); } catch {}
+      try { fs.unlinkSync(progressFile); } catch {}
+
+      if (code === 0 && stdout) {
+        try { resolve(JSON.parse(stdout.trim())); }
+        catch { resolve({ success: false, error: 'Failed to parse response' }); }
+      } else {
+        resolve({ success: false, error: stderr || 'Process failed' });
+      }
+    });
+  });
+});
+
+// ============ CONTENT CREATOR PROGRESS ============
+ipcMain.handle('get-content-progress', async (_, progressFile) => {
+  try {
+    if (fs.existsSync(progressFile)) {
+      return JSON.parse(fs.readFileSync(progressFile, 'utf-8'));
+    }
+  } catch {}
+  return { progress: 0, status: 'Aguardando...' };
+});
+
+// ============ VOICE PREVIEW (TTS) ============
+ipcMain.handle('preview-voice', async (_, { apiKey, voice, text }) => {
+  const basePath = app.isPackaged
+    ? process.resourcesPath
+    : process.cwd();
+
+  const pythonScript = path.join(basePath, 'python', 'content_creator.py');
+  const outputFile = path.join(app.getPath('temp'), `voice_preview_${Date.now()}.wav`);
+
+  const params = {
+    action: 'preview_voice',
+    apiKey,
+    voice,
+    text: text || 'Ola, esta e a minha voz. Como voce pode ouvir, eu sou perfeita para narrar seus videos.',
+    outputFile
+  };
+
+  return new Promise((resolve) => {
+    const tempFile = path.join(app.getPath('temp'), `voice_cmd_${Date.now()}.json`);
+    fs.writeFileSync(tempFile, JSON.stringify(params));
+
+    const pythonProcess = spawn('python', [pythonScript, '--file', tempFile], {
+      encoding: 'utf-8'
+    });
+
+    let stdout = '';
+    let stderr = '';
+
+    pythonProcess.stdout.on('data', (data) => { stdout += data.toString(); });
+    pythonProcess.stderr.on('data', (data) => { stderr += data.toString(); });
+
+    pythonProcess.on('close', (code) => {
+      try { fs.unlinkSync(tempFile); } catch {}
+
+      if (code === 0 && stdout) {
+        try {
+          const result = JSON.parse(stdout.trim());
+          resolve(result);
+        } catch {
+          resolve({ success: false, error: 'Failed to parse response' });
+        }
+      } else {
+        resolve({ success: false, error: stderr || 'Process failed' });
+      }
+    });
+  });
+});
+
+// ============ GET VOICE PREVIEW PATH ============
+ipcMain.handle('get-voice-preview-path', async (_, voiceId) => {
+  const basePath = app.isPackaged
+    ? process.resourcesPath
+    : process.cwd();
+  const voicePath = path.join(basePath, 'assets', 'voices', `${voiceId.toLowerCase()}.wav`);
+
+  // Verificar se o arquivo existe
+  if (fs.existsSync(voicePath)) {
+    return voicePath;
+  }
+  return null;
+});
+
+// ============ INSERT CREATOR CONTENT ============
+ipcMain.handle('insert-creator-content', async (_, { draftPath, contentFolder, addAnimations }) => {
+  return runPython({
+    action: 'insert_creator',
+    draftPath,
+    contentFolder,
+    addAnimations: addAnimations !== false
+  });
+});
+
+// ============ IMPORT MEDIA FOLDER ============
+ipcMain.handle('import-media-folder', async (_, { draftPath, folderPath, addAnimations, syncToAudio }) => {
+  return runPython({
+    action: 'import_folder',
+    draftPath,
+    folderPath,
+    addAnimations: addAnimations !== false,
+    syncToAudio: syncToAudio !== false
+  });
+});
+
+// ============ SCAN MEDIA FOLDER (preview before import) ============
+ipcMain.handle('scan-media-folder', async (_, folderPath) => {
+  try {
+    const IMAGE_EXTS = ['.png', '.jpg', '.jpeg', '.webp', '.gif', '.bmp'];
+    const VIDEO_EXTS = ['.mp4', '.mov', '.avi', '.mkv', '.webm', '.m4v'];
+    const AUDIO_EXTS = ['.wav', '.mp3', '.m4a', '.aac', '.ogg', '.flac'];
+    const SUBTITLE_EXTS = ['.srt', '.vtt', '.ass', '.sub'];
+
+    const files = fs.readdirSync(folderPath);
+    const media = { images: [], videos: [], audios: [], subtitles: [] };
+
+    for (const f of files) {
+      const fullPath = path.join(folderPath, f);
+      if (!fs.statSync(fullPath).isFile()) continue;
+      const ext = path.extname(f).toLowerCase();
+
+      if (IMAGE_EXTS.includes(ext)) media.images.push(f);
+      else if (VIDEO_EXTS.includes(ext)) media.videos.push(f);
+      else if (AUDIO_EXTS.includes(ext)) media.audios.push(f);
+      else if (SUBTITLE_EXTS.includes(ext)) media.subtitles.push(f);
+    }
+
+    // Sort alphabetically
+    media.images.sort((a, b) => a.toLowerCase().localeCompare(b.toLowerCase()));
+    media.videos.sort((a, b) => a.toLowerCase().localeCompare(b.toLowerCase()));
+    media.audios.sort((a, b) => a.toLowerCase().localeCompare(b.toLowerCase()));
+    media.subtitles.sort((a, b) => a.toLowerCase().localeCompare(b.toLowerCase()));
+
+    return {
+      success: true,
+      folderPath,
+      // Return both formats for compatibility
+      media,
+      images: media.images,
+      videos: media.videos,
+      audios: media.audios,
+      subtitles: media.subtitles,
+      total: media.images.length + media.videos.length + media.audios.length + media.subtitles.length
+    };
+  } catch (error) {
+    return { success: false, error: error.message, images: [], videos: [], audios: [], subtitles: [] };
+  }
 });
 
 // ============ BACKUP / UNDO SYSTEM (Multi-level) ============
@@ -1598,6 +2018,9 @@ ipcMain.handle('copy-project-to-local', async (_, { projectPath }) => {
     rootMeta.draft_ids = (rootMeta.draft_ids || 0) + 1;
     fs.writeFileSync(rootMetaPath, JSON.stringify(rootMeta));
 
+    // Ensure all project files use consistent draft_id
+    ensureConsistentDraftId(newProjectPath, capCutDrafts);
+
     console.log(`Project copied to local: ${newProjectName}`);
     return { success: true, localPath: newProjectPath, projectName: newProjectName };
   } catch (err) {
@@ -1890,6 +2313,9 @@ ipcMain.handle('merge-projects', async (_, { projectPaths, outputName, mode = 'f
       rootMeta.draft_ids = (rootMeta.draft_ids || 0) + 1;
       fs.writeFileSync(rootMetaPath, JSON.stringify(rootMeta));
 
+      // Ensure all project files use consistent draft_id
+      ensureConsistentDraftId(projectPath, capCutDrafts);
+
       return {
         success: true,
         path: projectPath,
@@ -2178,6 +2604,9 @@ ipcMain.handle('merge-projects', async (_, { projectPaths, outputName, mode = 'f
     rootMeta.all_draft_store.unshift(newDraftEntry);
     rootMeta.draft_ids = (rootMeta.draft_ids || 0) + 1;
     fs.writeFileSync(rootMetaPath, JSON.stringify(rootMeta));
+
+    // Ensure all project files use consistent draft_id
+    ensureConsistentDraftId(projectPath, capCutDrafts);
 
     return {
       success: true,

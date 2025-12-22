@@ -1,14 +1,16 @@
 import { useState, useEffect, useRef } from 'react'
 import { motion, AnimatePresence } from 'framer-motion'
-import { Zap, RefreshCw, FileText, HelpCircle, LogOut, FolderOpen, ChevronRight, Minus, Square, X, Download, ExternalLink, User as UserIcon, Crown, Undo2, Search, Clock, ChevronDown, Trash2, Film, Plus, Pencil, Check, Copy, Cloud, Layers } from 'lucide-react'
+import { Zap, RefreshCw, FileText, HelpCircle, LogOut, FolderOpen, ChevronRight, Minus, Square, X, Download, ExternalLink, User as UserIcon, Crown, Undo2, Search, Clock, ChevronDown, Trash2, Film, Plus, Pencil, Check, Copy, Cloud, Layers, Sparkles, Mic } from 'lucide-react'
 import type { User, TrackInfo, LogEntry } from '../types'
 import capcutLogo from '../assets/capcut-logo.jpg'
+import nardotoLogoVideo from '../assets/logo-nardoto-animacao.mp4'
 import TimelinePreview from './TimelinePreview'
 import SyncPanel from './panels/SyncPanel'
 import LoopPanel from './panels/LoopPanel'
 import SrtPanel from './panels/SrtPanel'
 import MediaPanel from './panels/MediaPanel'
 import MergePanel from './panels/MergePanel'
+import CreatorPanel from './panels/CreatorPanel'
 import HelpModal from './HelpModal'
 
 const { ipcRenderer } = window.require ? window.require('electron') : { ipcRenderer: null }
@@ -18,16 +20,17 @@ interface MainLayoutProps {
   onLogout: () => void
 }
 
-type TabType = 'sync' | 'loop' | 'srt' | 'media' | 'merge'
+type TabType = 'sync' | 'loop' | 'srt' | 'media' | 'merge' | 'creator'
 
 export default function MainLayout({ user, onLogout }: MainLayoutProps) {
-  const [activeTab, setActiveTab] = useState<TabType>('sync')
+  const [activeTab, setActiveTab] = useState<TabType>('creator')
   const [projectPath, setProjectPath] = useState<string | null>(null)
   const [projectName, setProjectName] = useState<string | null>(null)
   const [draftPath, setDraftPath] = useState<string | null>(null)
   const [tracks, setTracks] = useState<TrackInfo[]>([])
   const [isLoading, setIsLoading] = useState(false)
   const [selectedAudioTrack, setSelectedAudioTrack] = useState<number>(0)
+  const [mediaInsertMode, setMediaInsertMode] = useState<'video_image' | 'audio'>('video_image')
   const [appVersion, setAppVersion] = useState('2.0.0')
   const [updateAvailable, setUpdateAvailable] = useState<{ version: string; downloadUrl: string } | null>(null)
   const [showHelp, setShowHelp] = useState(false)
@@ -58,8 +61,21 @@ export default function MainLayout({ user, onLogout }: MainLayoutProps) {
     try { return localStorage.getItem('capcut_cloud_folder') } catch { return null }
   })
   const [cloudProjects, setCloudProjects] = useState<Array<{ name: string; path: string; draftPath: string; modifiedAt: string }>>([])
+  const [multiSelectMode, setMultiSelectMode] = useState(false)
+  const [selectedProjectsForDelete, setSelectedProjectsForDelete] = useState<Set<string>>(new Set())
+  const [showMultiDeleteConfirm, setShowMultiDeleteConfirm] = useState(false)
+  const [showTypeDeleteConfirm, setShowTypeDeleteConfirm] = useState(false)
+  const [typeToDelete, setTypeToDelete] = useState<string[] | null>(null)
+  // Import media folder modal
+  const [showImportPreview, setShowImportPreview] = useState(false)
+  const [importFolderPath, setImportFolderPath] = useState<string | null>(null)
+  const [importMedia, setImportMedia] = useState<{ images: string[]; videos: string[]; audios: string[]; subtitles?: string[] } | null>(null)
+  const [importAddAnimations, setImportAddAnimations] = useState(true)
+  const [importSyncToAudio, setImportSyncToAudio] = useState(true)
+  const [isImporting, setIsImporting] = useState(false)
+  const [importIsNewProject, setImportIsNewProject] = useState(false)  // Se true, cria projeto antes de importar
   const [logs, setLogs] = useState<LogEntry[]>([
-    { id: '1', type: 'info', message: 'CapCut Sync Pro v2.0 iniciado', timestamp: new Date() }
+    { id: '1', type: 'info', message: 'CapCut Sync Pro v2.1 iniciado', timestamp: new Date() }
   ])
   const [logCounter, setLogCounter] = useState(1)
   const [news, setNews] = useState<{ title: string; description: string; badge: string; link?: string | null }>({
@@ -69,7 +85,9 @@ export default function MainLayout({ user, onLogout }: MainLayoutProps) {
   })
 
   // Cores - usando laranja como cor principal do app
+  // CREATOR em primeiro lugar!
   const tabs = [
+    { id: 'creator' as const, label: 'CREATOR', icon: Sparkles, hexColor: '#E85A2A' }, // Laranja (gerador de conteudo)
     { id: 'sync' as const, label: 'SYNC', icon: Zap, hexColor: '#E85A2A' },           // Laranja (sincronizar)
     { id: 'loop' as const, label: 'LOOP', icon: RefreshCw, hexColor: '#E85A2A' },     // Laranja (repetir)
     { id: 'srt' as const, label: '+ SRT', icon: FileText, hexColor: '#E85A2A' },      // Laranja (adicionar legenda)
@@ -77,10 +95,10 @@ export default function MainLayout({ user, onLogout }: MainLayoutProps) {
     { id: 'merge' as const, label: 'MESCLAR', icon: Layers, hexColor: '#E85A2A' },    // Laranja (mesclar projetos)
   ]
 
-  // Calcular dias restantes de trial
-  const trialDaysRemaining = user.proActivatedBy === 'trial' && user.trialExpiresAt
-    ? Math.max(0, Math.ceil((new Date(user.trialExpiresAt).getTime() - Date.now()) / (24 * 60 * 60 * 1000)))
-    : -1
+  // Usar dias restantes do trial do objeto user
+  const trialDaysRemaining = user.trialDaysRemaining ?? -1
+  const userPlan = user.plan || 'free'
+  const isTrialActive = user.proActivatedBy === 'trial' && trialDaysRemaining > 0
 
   // Check for updates and fetch news on mount
   useEffect(() => {
@@ -290,6 +308,7 @@ export default function MainLayout({ user, onLogout }: MainLayoutProps) {
   }
 
   const audioTracks = tracks.filter(t => t.type === 'audio')
+  const videoTracks = tracks.filter(t => t.type === 'video')
 
   // Abrir projeto do CapCut (detecta e abre picker)
   const handleDetectCapCut = async () => {
@@ -497,6 +516,130 @@ export default function MainLayout({ user, onLogout }: MainLayoutProps) {
     }
   }
 
+  // Importar mídias de pasta
+  const handleImportMediaFolder = async () => {
+    if (!ipcRenderer || !draftPath) {
+      addLog('error', 'Abra um projeto primeiro')
+      return
+    }
+
+    try {
+      // Selecionar pasta
+      const folderPath = await ipcRenderer.invoke('select-folder')
+      if (!folderPath) return
+
+      addLog('info', 'Escaneando pasta...')
+
+      // Escanear pasta
+      const result = await ipcRenderer.invoke('scan-media-folder', folderPath)
+      if (!result.success) {
+        addLog('error', result.error || 'Erro ao escanear pasta')
+        return
+      }
+
+      if (result.total === 0) {
+        addLog('warning', 'Nenhuma mídia encontrada na pasta')
+        return
+      }
+
+      // Mostrar preview
+      setImportFolderPath(folderPath)
+      setImportMedia(result.media)
+      setShowImportPreview(true)
+      addLog('info', `Encontrados: ${result.media.images.length} img, ${result.media.videos.length} vid, ${result.media.audios.length} aud`)
+    } catch (error) {
+      addLog('error', 'Erro: ' + error)
+    }
+  }
+
+  // Confirmar importação de mídias
+  const handleConfirmImport = async () => {
+    if (!ipcRenderer || !importFolderPath) return
+
+    setIsImporting(true)
+    let targetDraftPath = draftPath
+
+    try {
+      // Se é novo projeto, criar primeiro
+      if (importIsNewProject) {
+        addLog('info', 'Criando novo projeto...')
+        const createResult = await ipcRenderer.invoke('create-new-project')
+        if (createResult.error) {
+          addLog('error', createResult.error)
+          return
+        }
+
+        setProjectPath(createResult.path)
+        setProjectName(createResult.name)
+        setDraftPath(createResult.draftPath)
+        targetDraftPath = createResult.draftPath
+        setTracks([])
+        setSelectedAudioTrack(0)
+        addLog('success', `Projeto criado: ${createResult.name}`)
+      }
+
+      if (!targetDraftPath) {
+        addLog('error', 'Nenhum projeto aberto')
+        return
+      }
+
+      addLog('info', 'Importando mídias...')
+
+      const result = await ipcRenderer.invoke('import-media-folder', {
+        draftPath: targetDraftPath,
+        folderPath: importFolderPath,
+        addAnimations: importAddAnimations,
+        syncToAudio: importSyncToAudio
+      })
+
+      if (result.success) {
+        const stats = result.stats || {}
+        addLog('success', `Importado: ${stats.imagesInserted || 0} img, ${stats.videosInserted || 0} vid, ${stats.audiosInserted || 0} aud`)
+
+        // Se tiver legendas SRT, inserir usando a função que funciona
+        if (importMedia?.subtitles && importMedia.subtitles.length > 0) {
+          addLog('info', `Inserindo ${importMedia.subtitles.length} legendas...`)
+
+          // Montar os paths completos dos arquivos SRT
+          const srtPaths = importMedia.subtitles.map(f => `${importFolderPath}/${f}`)
+
+          const srtResult = await ipcRenderer.invoke('insert-srt-batch', {
+            draftPath: targetDraftPath,
+            srtFiles: srtPaths,
+            createTitle: false,
+            gapMs: 0
+          })
+
+          if (srtResult.error) {
+            addLog('error', `Erro ao inserir legendas: ${srtResult.error}`)
+          } else {
+            addLog('success', `Legendas inseridas: ${srtResult.stats?.totalSubtitles || 0} segmentos`)
+          }
+        }
+
+        setShowImportPreview(false)
+        setImportFolderPath(null)
+        setImportMedia(null)
+        setImportIsNewProject(false)
+
+        // Reanalisar para atualizar tracks
+        const analyzeResult = await ipcRenderer.invoke('run-python', {
+          action: 'analyze',
+          draftPath: targetDraftPath
+        })
+        if (!analyzeResult.error) {
+          setTracks(analyzeResult.tracks || [])
+        }
+      } else {
+        addLog('error', result.error || 'Erro na importação')
+      }
+    } catch (error) {
+      addLog('error', 'Erro: ' + error)
+    } finally {
+      setIsImporting(false)
+    }
+  }
+
   // Criar novo projeto do zero
   const handleNewProject = async () => {
     if (!ipcRenderer) { addLog('error', 'Electron IPC not available'); return }
@@ -518,6 +661,48 @@ export default function MainLayout({ user, onLogout }: MainLayoutProps) {
       addLog('info', 'Agora adicione midias na aba MIDIA')
     } catch (error) {
       addLog('error', 'Erro ao criar projeto: ' + error)
+    }
+  }
+
+  // Criar novo projeto a partir de uma pasta de mídias
+  const handleNewProjectFromMedia = async () => {
+    if (!ipcRenderer) { addLog('error', 'Electron IPC not available'); return }
+
+    try {
+      // 1. Selecionar pasta com mídias
+      const folderPath = await ipcRenderer.invoke('select-output-folder')
+      if (!folderPath) {
+        addLog('warning', 'Seleção cancelada')
+        return
+      }
+
+      addLog('info', 'Escaneando pasta...')
+
+      // 2. Verificar se há mídias na pasta
+      const scanResult = await ipcRenderer.invoke('scan-media-folder', folderPath)
+      if (!scanResult.success) {
+        addLog('error', scanResult.error || 'Erro ao escanear pasta')
+        return
+      }
+
+      const totalFiles = scanResult.images.length + scanResult.videos.length + scanResult.audios.length
+      if (totalFiles === 0) {
+        addLog('warning', 'Nenhuma mídia encontrada na pasta')
+        return
+      }
+
+      // 3. Mostrar modal de preview (ao invés de importar direto)
+      setImportFolderPath(folderPath)
+      setImportMedia({
+        images: scanResult.images,
+        videos: scanResult.videos,
+        audios: scanResult.audios,
+        subtitles: scanResult.subtitles || []
+      })
+      setImportIsNewProject(true)  // Indica que vai criar projeto antes de importar
+      setShowImportPreview(true)
+    } catch (error) {
+      addLog('error', 'Erro: ' + error)
     }
   }
 
@@ -562,11 +747,69 @@ export default function MainLayout({ user, onLogout }: MainLayoutProps) {
     }
   }
 
-  // Deletar tracks por tipo
-  const handleDeleteTracksByType = async (trackTypes: string[]) => {
-    if (!ipcRenderer || !draftPath) return
+  // Toggle seleção de projeto para delete múltiplo
+  const toggleProjectSelection = (projectPath: string) => {
+    setSelectedProjectsForDelete(prev => {
+      const newSet = new Set(prev)
+      if (newSet.has(projectPath)) {
+        newSet.delete(projectPath)
+      } else {
+        newSet.add(projectPath)
+      }
+      return newSet
+    })
+  }
 
-    const typeNames = trackTypes.map(t => {
+  // Deletar múltiplos projetos
+  const handleDeleteMultipleProjects = async () => {
+    if (!ipcRenderer || selectedProjectsForDelete.size === 0) return
+
+    const count = selectedProjectsForDelete.size
+    addLog('info', `Deletando ${count} projeto(s)...`)
+    setShowMultiDeleteConfirm(false)
+
+    try {
+      const result = await ipcRenderer.invoke('delete-multiple-projects', {
+        projectPaths: Array.from(selectedProjectsForDelete)
+      })
+
+      if (result.error) {
+        addLog('error', result.error)
+        return
+      }
+
+      addLog('success', `${result.deletedCount} projeto(s) deletado(s) com sucesso`)
+
+      // Se deletou o projeto atual, limpa o estado
+      if (projectPath && selectedProjectsForDelete.has(projectPath)) {
+        setProjectPath(null)
+        setProjectName(null)
+        setDraftPath(null)
+        setTracks([])
+        setSelectedAudioTrack(0)
+      }
+
+      // Remove projetos da lista
+      setCapCutProjects(prev => prev.filter(p => !selectedProjectsForDelete.has(p.path)))
+      setSelectedProjectsForDelete(new Set())
+      setMultiSelectMode(false)
+    } catch (error) {
+      addLog('error', 'Erro ao deletar projetos: ' + error)
+    }
+  }
+
+  // Pedir confirmação para deletar tracks por tipo
+  const askDeleteTracksByType = (trackTypes: string[]) => {
+    setTypeToDelete(trackTypes)
+    setShowTrackManager(false) // Fecha o gerenciador
+    setShowTypeDeleteConfirm(true) // Abre confirmação
+  }
+
+  // Executar delete de tracks por tipo após confirmação
+  const handleDeleteTracksByType = async () => {
+    if (!ipcRenderer || !draftPath || !typeToDelete) return
+
+    const typeNames = typeToDelete.map(t => {
       if (t === 'text') return 'legendas'
       if (t === 'effect') return 'efeitos'
       if (t === 'filter') return 'filtros'
@@ -574,11 +817,13 @@ export default function MainLayout({ user, onLogout }: MainLayoutProps) {
     }).join(', ')
 
     addLog('info', `Removendo ${typeNames}...`)
+    setShowTypeDeleteConfirm(false)
 
     try {
-      const result = await ipcRenderer.invoke('delete-tracks-by-type', { draftPath, trackTypes })
+      const result = await ipcRenderer.invoke('delete-tracks-by-type', { draftPath, trackTypes: typeToDelete })
       if (result.error) {
         addLog('error', result.error)
+        setTypeToDelete(null)
         return
       }
 
@@ -590,9 +835,10 @@ export default function MainLayout({ user, onLogout }: MainLayoutProps) {
         setTracks(analyzeResult.tracks)
       }
 
-      setShowTrackManager(false)
+      setTypeToDelete(null)
     } catch (error) {
       addLog('error', 'Erro ao remover tracks: ' + error)
+      setTypeToDelete(null)
     }
   }
 
@@ -601,6 +847,7 @@ export default function MainLayout({ user, onLogout }: MainLayoutProps) {
     const track = tracks.find((_, idx) => idx === trackIndex) || tracks[trackIndex]
     if (track) {
       setTrackToDelete({ index: trackIndex, type: track.type, name: track.name })
+      setShowTrackManager(false) // Fecha o gerenciador primeiro
       setShowTrackDeleteConfirm(true)
     }
   }
@@ -710,10 +957,20 @@ export default function MainLayout({ user, onLogout }: MainLayoutProps) {
                 {user.displayName || user.email?.split('@')[0] || 'Usuário'}
               </span>
               <span className="text-[9px] text-text-muted leading-tight flex items-center gap-1">
-                {trialDaysRemaining >= 0 ? (
+                {isTrialActive ? (
                   <>
                     <span className="text-yellow-400">Trial</span>
                     <span>• {trialDaysRemaining} dias</span>
+                  </>
+                ) : userPlan === 'vip' ? (
+                  <>
+                    <Crown className="w-3 h-3 text-yellow-400" />
+                    <span className="text-yellow-400 font-bold">VIP</span>
+                  </>
+                ) : userPlan === 'basic' ? (
+                  <>
+                    <Crown className="w-3 h-3 text-primary" />
+                    <span className="text-primary">BÁSICO</span>
                   </>
                 ) : (
                   <>
@@ -742,59 +999,59 @@ export default function MainLayout({ user, onLogout }: MainLayoutProps) {
         </div>
       </div>
 
-      <div className="flex-1 flex overflow-hidden min-h-0">
-        {/* Sidebar */}
-        <div className="w-16 bg-background-dark-alt border-r border-border-light flex flex-col items-center py-2 gap-1 flex-shrink-0">
-          {tabs.map((tab) => (
-            <button
-              key={tab.id}
-              onClick={() => setActiveTab(tab.id)}
-              className={`w-12 h-12 rounded-lg flex flex-col items-center justify-center gap-0.5 transition-all duration-200 ${
-                activeTab === tab.id
-                  ? 'border'
-                  : 'hover:bg-white/5 border border-transparent'
-              }`}
-              style={activeTab === tab.id ? {
-                backgroundColor: `${tab.hexColor}30`,
-                borderColor: `${tab.hexColor}80`,
-                boxShadow: `0 0 12px ${tab.hexColor}50`
-              } : {}}
-            >
-              <tab.icon
-                className="w-4 h-4"
-                style={{ color: activeTab === tab.id ? tab.hexColor : '#A3A3A3' }}
-              />
-              <span className={`text-[9px] font-medium ${activeTab === tab.id ? 'text-white' : 'text-text-muted'}`}>
-                {tab.label}
-              </span>
-            </button>
-          ))}
+      <div className="flex-1 flex flex-col overflow-hidden min-h-0">
+        {/* Tabs - Estilo Fichário */}
+        <div className="flex-shrink-0 bg-background-dark-alt px-2 pt-2 flex items-end gap-0 border-b border-border-light">
+          {tabs.map((tab) => {
+            const isActive = activeTab === tab.id
+            return (
+              <button
+                key={tab.id}
+                onClick={() => setActiveTab(tab.id)}
+                className={`relative px-4 py-2 flex items-center gap-1.5 transition-all duration-200 rounded-t-lg ${
+                  isActive
+                    ? 'bg-background-dark border-t border-l border-r border-border-light text-white -mb-px z-10'
+                    : 'bg-background-dark-alt/50 text-text-muted hover:text-text-secondary hover:bg-white/5 border border-transparent mb-0'
+                }`}
+                style={isActive ? {
+                  borderTopColor: tab.hexColor,
+                  borderTopWidth: '2px'
+                } : {}}
+              >
+                <tab.icon
+                  className="w-3.5 h-3.5"
+                  style={{ color: isActive ? tab.hexColor : '#A3A3A3' }}
+                />
+                <span className={`text-[10px] font-semibold ${isActive ? 'text-white' : ''}`}>
+                  {tab.label}
+                </span>
+              </button>
+            )
+          })}
 
           <div className="flex-1" />
 
-          {/* Credits */}
-          <button
-            onClick={() => ipcRenderer?.invoke('open-external', 'https://nardoto.com.br')}
-            className="w-12 h-10 rounded-lg flex flex-col items-center justify-center hover:bg-white/5 transition-colors"
-            title="Desenvolvido por Nardoto"
-          >
-            <ExternalLink className="w-3.5 h-3.5 text-text-muted" />
-            <span className="text-[8px] text-text-muted">nardoto</span>
-          </button>
-
-          {/* Help button - opens internal modal */}
-          <button
-            onClick={() => setShowHelp(true)}
-            className="w-12 h-10 rounded-lg flex flex-col items-center justify-center hover:bg-primary/20 transition-colors border border-transparent hover:border-primary/30"
-            title="Como usar o CapCut Sync Pro"
-          >
-            <HelpCircle className="w-4 h-4 text-primary" />
-            <span className="text-[8px] text-primary/80">AJUDA</span>
-          </button>
+          {/* Help & Credits */}
+          <div className="flex items-center gap-1 mb-1">
+            <button
+              onClick={() => setShowHelp(true)}
+              className="p-1.5 rounded hover:bg-primary/20 transition-colors"
+              title="Ajuda"
+            >
+              <HelpCircle className="w-3.5 h-3.5 text-primary" />
+            </button>
+            <button
+              onClick={() => ipcRenderer?.invoke('open-external', 'https://nardoto.com.br')}
+              className="p-1.5 rounded hover:bg-white/10 transition-colors"
+              title="nardoto.com.br"
+            >
+              <ExternalLink className="w-3.5 h-3.5 text-text-muted" />
+            </button>
+          </div>
         </div>
 
         {/* Main Content */}
-        <div className="flex-1 flex flex-col overflow-hidden min-h-0">
+        <div className="flex-1 flex flex-col overflow-hidden min-h-0 bg-background-dark">
           {/* Project selector */}
           <div className="p-2 border-b border-border-light flex-shrink-0">
             <div className="flex items-center gap-2">
@@ -860,6 +1117,20 @@ export default function MainLayout({ user, onLogout }: MainLayoutProps) {
                         <div>
                           <span className="text-xs text-white font-medium block">A partir de template</span>
                           <span className="text-[10px] text-text-muted">Usa projeto existente</span>
+                        </div>
+                      </button>
+                      <button
+                        onClick={() => { setShowNewDropdown(false); handleNewProjectFromMedia(); }}
+                        disabled={isImporting}
+                        className="w-full p-3 flex items-center gap-3 hover:bg-white/10 transition-colors text-left border-t border-border-light disabled:opacity-50 disabled:cursor-not-allowed"
+                        title="Criar projeto com mídias de uma pasta"
+                      >
+                        <div className="w-8 h-8 rounded-lg bg-gradient-to-br from-primary/30 to-primary/10 flex items-center justify-center">
+                          <Download className="w-4 h-4 text-primary" />
+                        </div>
+                        <div>
+                          <span className="text-xs text-white font-medium block">Projeto com Mídias</span>
+                          <span className="text-[10px] text-text-muted">Cria projeto e importa pasta</span>
                         </div>
                       </button>
                     </motion.div>
@@ -1068,6 +1339,8 @@ export default function MainLayout({ user, onLogout }: MainLayoutProps) {
                     selectedAudioTrack={selectedAudioTrack}
                     onTrackClick={handleTrackClick}
                     onDeleteTrack={handleDeleteTrack}
+                    activeTab={activeTab}
+                    mediaInsertMode={mediaInsertMode}
                   />
                 </div>
               </div>
@@ -1137,6 +1410,8 @@ export default function MainLayout({ user, onLogout }: MainLayoutProps) {
                         onReanalyze={handleReanalyze}
                         selectedAudioTrack={selectedAudioTrack}
                         refTrackName={audioTracks.find(t => t.index === selectedAudioTrack)?.name}
+                        videoTrackName={videoTracks.length > 0 ? videoTracks[0].name : 'Nova track de vídeo'}
+                        onMediaModeChange={setMediaInsertMode}
                       />
                     </motion.div>
                   )}
@@ -1155,27 +1430,40 @@ export default function MainLayout({ user, onLogout }: MainLayoutProps) {
                       />
                     </motion.div>
                   )}
+
+                  {activeTab === 'creator' && (
+                    <motion.div
+                      key="creator"
+                      initial={{ opacity: 0, x: -10 }}
+                      animate={{ opacity: 1, x: 0 }}
+                      exit={{ opacity: 0, x: 10 }}
+                      className="h-full overflow-auto"
+                    >
+                      <CreatorPanel
+                        onLog={addLog}
+                        isPro={userPlan === 'vip'}
+                        draftPath={draftPath}
+                        onReanalyze={handleReanalyze}
+                      />
+                    </motion.div>
+                  )}
                 </AnimatePresence>
               </div>
             </div>
 
             {/* Projects Panel */}
             <div className="w-72 border-l border-border-light flex-shrink-0 flex flex-col bg-gradient-to-b from-background-dark to-background-dark-alt">
-              {/* Banner de novidades */}
+              {/* Video Nardoto Logo */}
               <div className="p-3 border-b border-border-light">
-                <div
-                  className={`bg-gradient-to-r from-primary/20 to-primary/5 border border-primary/30 rounded-lg p-3 relative overflow-hidden ${news.link ? 'cursor-pointer hover:from-primary/30 hover:to-primary/10 transition-all' : ''}`}
-                  onClick={() => news.link && ipcRenderer?.invoke('open-external', news.link)}
-                >
-                  <div className="absolute top-0 right-0 w-20 h-20 bg-primary/10 rounded-full blur-2xl -mr-10 -mt-10" />
-                  <div className="relative">
-                    <div className="flex items-center gap-2 mb-1">
-                      <span className="text-[10px] bg-primary/30 text-primary px-1.5 py-0.5 rounded font-medium">{news.badge}</span>
-                      {news.link && <ExternalLink className="w-3 h-3 text-primary/50" />}
-                    </div>
-                    <p className="text-xs text-white font-medium">{news.title}</p>
-                    <p className="text-[10px] text-text-muted mt-0.5">{news.description}</p>
-                  </div>
+                <div className="rounded-lg overflow-hidden border border-primary/30 bg-black">
+                  <video
+                    src={nardotoLogoVideo}
+                    autoPlay
+                    loop
+                    muted
+                    playsInline
+                    className="w-full h-auto object-contain"
+                  />
                 </div>
               </div>
 
@@ -1185,7 +1473,10 @@ export default function MainLayout({ user, onLogout }: MainLayoutProps) {
                 <div className="p-2 border-b border-border-light">
                   <div className="flex rounded-lg bg-white/5 p-0.5">
                     <button
-                      onClick={() => setProjectSource('local')}
+                      onClick={() => {
+                        setProjectSource('local')
+                        handleRefreshProjects() // Auto-refresh when switching to local
+                      }}
                       className={`flex-1 py-1.5 px-2 rounded-md text-[10px] font-medium transition-all flex items-center justify-center gap-1 ${
                         projectSource === 'local'
                           ? 'bg-primary text-white'
@@ -1218,14 +1509,42 @@ export default function MainLayout({ user, onLogout }: MainLayoutProps) {
                 <div className="p-2 border-b border-border-light flex items-center justify-between">
                   {projectSource === 'local' ? (
                     <>
-                      <span className="text-[10px] text-text-muted">Projetos locais</span>
-                      <button
-                        onClick={handleRefreshProjects}
-                        className="text-[10px] text-primary hover:text-primary/80 flex items-center gap-1"
-                      >
-                        <RefreshCw className="w-3 h-3" />
-                        Atualizar
-                      </button>
+                      <div className="flex items-center gap-2">
+                        <span className="text-[10px] text-text-muted">Projetos locais</span>
+                        {/* Botão discreto para ativar modo de seleção */}
+                        <button
+                          onClick={() => {
+                            setMultiSelectMode(!multiSelectMode)
+                            if (multiSelectMode) setSelectedProjectsForDelete(new Set())
+                          }}
+                          className={`p-1 rounded transition-colors ${
+                            multiSelectMode
+                              ? 'bg-red-500/20 text-red-400'
+                              : 'text-text-muted/50 hover:text-text-muted'
+                          }`}
+                          title={multiSelectMode ? 'Cancelar seleção' : 'Selecionar múltiplos'}
+                        >
+                          <Check className="w-3 h-3" />
+                        </button>
+                      </div>
+                      <div className="flex items-center gap-2">
+                        {multiSelectMode && selectedProjectsForDelete.size > 0 && (
+                          <button
+                            onClick={() => setShowMultiDeleteConfirm(true)}
+                            className="text-[10px] text-red-400 hover:text-red-300 flex items-center gap-1"
+                          >
+                            <Trash2 className="w-3 h-3" />
+                            Apagar ({selectedProjectsForDelete.size})
+                          </button>
+                        )}
+                        <button
+                          onClick={handleRefreshProjects}
+                          className="text-[10px] text-primary hover:text-primary/80 flex items-center gap-1"
+                        >
+                          <RefreshCw className="w-3 h-3" />
+                          Atualizar
+                        </button>
+                      </div>
                     </>
                   ) : (
                     <>
@@ -1269,26 +1588,60 @@ export default function MainLayout({ user, onLogout }: MainLayoutProps) {
                           <div
                             key={project.path}
                             className={`w-full p-2 rounded-lg text-left transition-all group ${
-                              projectPath === project.path
-                                ? 'bg-primary/20 border border-primary/50'
-                                : 'bg-white/5 hover:bg-white/10 border border-transparent'
+                              selectedProjectsForDelete.has(project.path)
+                                ? 'bg-red-500/20 border border-red-500/50'
+                                : projectPath === project.path
+                                  ? 'bg-primary/20 border border-primary/50'
+                                  : 'bg-white/5 hover:bg-white/10 border border-transparent'
                             }`}
                           >
                             <div className="flex items-center gap-2">
+                              {/* Checkbox para seleção múltipla */}
+                              {multiSelectMode && (
+                                <button
+                                  onClick={() => toggleProjectSelection(project.path)}
+                                  className={`w-5 h-5 rounded border-2 flex items-center justify-center flex-shrink-0 transition-all ${
+                                    selectedProjectsForDelete.has(project.path)
+                                      ? 'bg-red-500 border-red-500'
+                                      : 'border-text-muted/50 hover:border-red-400'
+                                  }`}
+                                >
+                                  {selectedProjectsForDelete.has(project.path) && (
+                                    <Check className="w-3 h-3 text-white" />
+                                  )}
+                                </button>
+                              )}
                               <button
                                 onClick={() => {
+                                  if (multiSelectMode) {
+                                    toggleProjectSelection(project.path)
+                                    return
+                                  }
                                   if (projectPath === project.path) return
                                   setProjectToOpen(project)
                                 }}
                                 className="flex items-center gap-2 flex-1 min-w-0"
                               >
-                                <div className={`w-6 h-6 rounded flex items-center justify-center flex-shrink-0 ${
-                                  projectPath === project.path ? 'bg-primary/30' : 'bg-white/10'
+                                {/* Miniatura do projeto */}
+                                <div className={`w-10 h-10 rounded overflow-hidden flex-shrink-0 ${
+                                  projectPath === project.path ? 'ring-2 ring-primary' : ''
                                 }`}>
-                                  <Film className="w-3 h-3 text-primary" />
+                                  <img
+                                    src={`file://${project.path.replace(/\\/g, '/')}/draft_cover.jpg`}
+                                    alt=""
+                                    className="w-full h-full object-cover"
+                                    onError={(e) => {
+                                      // Fallback para ícone se não tiver thumbnail
+                                      const target = e.target as HTMLImageElement
+                                      target.style.display = 'none'
+                                      target.parentElement!.classList.add('bg-white/10', 'flex', 'items-center', 'justify-center')
+                                      target.parentElement!.innerHTML = '<svg class="w-4 h-4 text-primary" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M7 4v16M17 4v16M3 8h4m10 0h4M3 12h18M3 16h4m10 0h4M4 20h16a1 1 0 001-1V5a1 1 0 00-1-1H4a1 1 0 00-1 1v14a1 1 0 001 1z"></path></svg>'
+                                    }}
+                                  />
                                 </div>
                                 <div className="min-w-0 flex-1 text-left">
                                   <span className={`text-xs block truncate ${
+                                    selectedProjectsForDelete.has(project.path) ? 'text-red-400' :
                                     projectPath === project.path ? 'text-primary font-medium' : 'text-white'
                                   }`}>
                                     {project.name}
@@ -1299,17 +1652,19 @@ export default function MainLayout({ user, onLogout }: MainLayoutProps) {
                                   </span>
                                 </div>
                               </button>
-                              <button
-                                onClick={(e) => {
-                                  e.stopPropagation();
-                                  setProjectToDelete({ name: project.name, path: project.path });
-                                  setShowDeleteConfirm(true);
-                                }}
-                                className="p-1 hover:bg-red-500/20 rounded text-text-muted hover:text-red-400 opacity-0 group-hover:opacity-100 transition-opacity"
-                                title="Deletar projeto"
-                              >
-                                <Trash2 className="w-3 h-3" />
-                              </button>
+                              {!multiSelectMode && (
+                                <button
+                                  onClick={(e) => {
+                                    e.stopPropagation();
+                                    setProjectToDelete({ name: project.name, path: project.path });
+                                    setShowDeleteConfirm(true);
+                                  }}
+                                  className="p-1 hover:bg-red-500/20 rounded text-text-muted hover:text-red-400 opacity-0 group-hover:opacity-100 transition-opacity"
+                                  title="Deletar projeto"
+                                >
+                                  <Trash2 className="w-3 h-3" />
+                                </button>
+                              )}
                             </div>
                           </div>
                         ))}
@@ -1452,8 +1807,19 @@ export default function MainLayout({ user, onLogout }: MainLayoutProps) {
                           onClick={() => handleSelectProject(project)}
                           className="flex-1 flex items-center gap-3 text-left"
                         >
-                          <div className="w-8 h-8 rounded-lg bg-primary/20 flex items-center justify-center flex-shrink-0">
-                            <FolderOpen className="w-4 h-4 text-primary" />
+                          {/* Miniatura do projeto */}
+                          <div className="w-12 h-12 rounded-lg overflow-hidden flex-shrink-0 bg-white/10">
+                            <img
+                              src={`file://${project.path.replace(/\\/g, '/')}/draft_cover.jpg`}
+                              alt=""
+                              className="w-full h-full object-cover"
+                              onError={(e) => {
+                                const target = e.target as HTMLImageElement
+                                target.style.display = 'none'
+                                target.parentElement!.classList.add('flex', 'items-center', 'justify-center')
+                                target.parentElement!.innerHTML = '<svg class="w-5 h-5 text-primary" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M7 4v16M17 4v16M3 8h4m10 0h4M3 12h18M3 16h4m10 0h4M4 20h16a1 1 0 001-1V5a1 1 0 00-1-1H4a1 1 0 00-1 1v14a1 1 0 001 1z"></path></svg>'
+                              }}
+                            />
                           </div>
                           <div className="min-w-0 flex-1">
                             <span className="text-white font-medium group-hover:text-primary transition-colors block truncate">
@@ -1716,10 +2082,10 @@ export default function MainLayout({ user, onLogout }: MainLayoutProps) {
 
             {/* Modal */}
             <motion.div
-              initial={{ opacity: 0, scale: 0.9, y: 20 }}
-              animate={{ opacity: 1, scale: 1, y: 0 }}
-              exit={{ opacity: 0, scale: 0.9, y: 20 }}
-              className="fixed left-1/2 top-1/2 -translate-x-1/2 -translate-y-1/2 w-[480px] bg-[#0f0f0f] border border-border-light rounded-2xl z-50 flex flex-col overflow-hidden shadow-2xl"
+              initial={{ opacity: 0, scale: 0.95 }}
+              animate={{ opacity: 1, scale: 1 }}
+              exit={{ opacity: 0, scale: 0.95 }}
+              className="fixed inset-0 m-auto w-[480px] h-fit max-h-[80vh] bg-[#0f0f0f] border border-border-light rounded-2xl z-50 flex flex-col overflow-hidden shadow-2xl"
             >
               {/* Header with gradient */}
               <div className="relative p-5 border-b border-border-light bg-[#141414]">
@@ -1744,13 +2110,13 @@ export default function MainLayout({ user, onLogout }: MainLayoutProps) {
               </div>
 
               {/* Content */}
-              <div className="p-5 space-y-5">
+              <div className="p-5 space-y-5 overflow-y-auto flex-1">
                 {/* Ações rápidas por tipo */}
                 <div>
                   <div className="text-[10px] text-text-muted uppercase tracking-wider mb-3 font-medium">Apagar por tipo</div>
                   <div className="grid grid-cols-3 gap-3">
                     <button
-                      onClick={() => handleDeleteTracksByType(['text'])}
+                      onClick={() => askDeleteTracksByType(['text'])}
                       className="p-4 bg-white/5 border border-border-light rounded-xl hover:bg-primary/10 hover:border-primary/30 transition-all text-center group"
                     >
                       <FileText className="w-6 h-6 text-primary mx-auto mb-2 group-hover:scale-110 transition-transform" />
@@ -1758,7 +2124,7 @@ export default function MainLayout({ user, onLogout }: MainLayoutProps) {
                       <span className="text-[10px] text-text-muted">Textos/Subtitles</span>
                     </button>
                     <button
-                      onClick={() => handleDeleteTracksByType(['effect'])}
+                      onClick={() => askDeleteTracksByType(['effect'])}
                       className="p-4 bg-white/5 border border-border-light rounded-xl hover:bg-primary/10 hover:border-primary/30 transition-all text-center group"
                     >
                       <Zap className="w-6 h-6 text-primary mx-auto mb-2 group-hover:scale-110 transition-transform" />
@@ -1766,7 +2132,7 @@ export default function MainLayout({ user, onLogout }: MainLayoutProps) {
                       <span className="text-[10px] text-text-muted">Video effects</span>
                     </button>
                     <button
-                      onClick={() => handleDeleteTracksByType(['filter'])}
+                      onClick={() => askDeleteTracksByType(['filter'])}
                       className="p-4 bg-white/5 border border-border-light rounded-xl hover:bg-primary/10 hover:border-primary/30 transition-all text-center group"
                     >
                       <Film className="w-6 h-6 text-primary mx-auto mb-2 group-hover:scale-110 transition-transform" />
@@ -1902,6 +2268,259 @@ export default function MainLayout({ user, onLogout }: MainLayoutProps) {
                     className="flex-1 py-2.5 bg-red-500 hover:bg-red-600 text-white text-sm font-medium rounded-lg transition-colors"
                   >
                     Sim, deletar
+                  </button>
+                </div>
+              </div>
+            </motion.div>
+          </>
+        )}
+      </AnimatePresence>
+
+      {/* Import Media Preview Modal */}
+      <AnimatePresence>
+        {showImportPreview && importMedia && (
+          <>
+            <motion.div
+              initial={{ opacity: 0 }}
+              animate={{ opacity: 1 }}
+              exit={{ opacity: 0 }}
+              className="fixed inset-0 bg-black/80 z-[60]"
+              onClick={() => { setShowImportPreview(false); setImportIsNewProject(false); }}
+            />
+            <motion.div
+              initial={{ opacity: 0, scale: 0.95 }}
+              animate={{ opacity: 1, scale: 1 }}
+              exit={{ opacity: 0, scale: 0.95 }}
+              className="fixed inset-0 m-auto w-[420px] max-h-[80vh] bg-[#0f0f0f] border border-orange-500/30 rounded-xl z-[60] flex flex-col"
+            >
+              {/* Header */}
+              <div className="p-3 border-b border-border-light flex items-center gap-3 flex-shrink-0">
+                <div className="w-8 h-8 rounded-full bg-orange-500/20 flex items-center justify-center">
+                  {importIsNewProject ? <Plus className="w-4 h-4 text-orange-400" /> : <Download className="w-4 h-4 text-orange-400" />}
+                </div>
+                <div className="flex-1 min-w-0">
+                  <h3 className="text-sm font-bold text-white">
+                    {importIsNewProject ? 'Novo Projeto' : 'Importar Mídias'}
+                  </h3>
+                  <p className="text-[10px] text-text-muted truncate">{importFolderPath?.split(/[/\\]/).pop()}</p>
+                </div>
+              </div>
+
+              {/* Content - Lista de arquivos */}
+              <div className="flex-1 overflow-y-auto p-3 space-y-3">
+                {/* Imagens */}
+                {importMedia.images.length > 0 && (
+                  <div className="bg-orange-500/10 border border-orange-500/20 rounded-lg p-2">
+                    <div className="flex items-center gap-2 mb-1.5">
+                      <Film className="w-3 h-3 text-orange-400" />
+                      <span className="text-[10px] font-medium text-orange-400">Imagens ({importMedia.images.length})</span>
+                    </div>
+                    <div className="space-y-0.5 max-h-20 overflow-y-auto">
+                      {importMedia.images.map((f, i) => (
+                        <div key={i} className="text-[9px] text-gray-400 font-mono truncate">{f}</div>
+                      ))}
+                    </div>
+                  </div>
+                )}
+
+                {/* Vídeos */}
+                {importMedia.videos.length > 0 && (
+                  <div className="bg-orange-500/10 border border-orange-500/20 rounded-lg p-2">
+                    <div className="flex items-center gap-2 mb-1.5">
+                      <Film className="w-3 h-3 text-orange-400" />
+                      <span className="text-[10px] font-medium text-orange-400">Vídeos ({importMedia.videos.length})</span>
+                    </div>
+                    <div className="space-y-0.5 max-h-20 overflow-y-auto">
+                      {importMedia.videos.map((f, i) => (
+                        <div key={i} className="text-[9px] text-gray-400 font-mono truncate">{f}</div>
+                      ))}
+                    </div>
+                  </div>
+                )}
+
+                {/* Áudios */}
+                {importMedia.audios.length > 0 && (
+                  <div className="bg-orange-500/10 border border-orange-500/20 rounded-lg p-2">
+                    <div className="flex items-center gap-2 mb-1.5">
+                      <Mic className="w-3 h-3 text-orange-400" />
+                      <span className="text-[10px] font-medium text-orange-400">Áudios ({importMedia.audios.length})</span>
+                    </div>
+                    <div className="space-y-0.5 max-h-20 overflow-y-auto">
+                      {importMedia.audios.map((f, i) => (
+                        <div key={i} className="text-[9px] text-gray-400 font-mono truncate">{f}</div>
+                      ))}
+                    </div>
+                  </div>
+                )}
+
+                {/* Legendas */}
+                {importMedia.subtitles && importMedia.subtitles.length > 0 && (
+                  <div className="bg-orange-500/10 border border-orange-500/20 rounded-lg p-2">
+                    <div className="flex items-center gap-2 mb-1.5">
+                      <FileText className="w-3 h-3 text-orange-400" />
+                      <span className="text-[10px] font-medium text-orange-400">Legendas ({importMedia.subtitles.length})</span>
+                    </div>
+                    <div className="space-y-0.5 max-h-20 overflow-y-auto">
+                      {importMedia.subtitles.map((f, i) => (
+                        <div key={i} className="text-[9px] text-gray-400 font-mono truncate">{f}</div>
+                      ))}
+                    </div>
+                  </div>
+                )}
+
+                {/* Options */}
+                <div className="flex gap-4 pt-1">
+                  <label className="flex items-center gap-1.5 cursor-pointer">
+                    <input
+                      type="checkbox"
+                      checked={importAddAnimations}
+                      onChange={(e) => setImportAddAnimations(e.target.checked)}
+                      className="w-3 h-3 accent-orange-500"
+                    />
+                    <span className="text-[10px] text-gray-300">Animações</span>
+                  </label>
+                  <label className="flex items-center gap-1.5 cursor-pointer">
+                    <input
+                      type="checkbox"
+                      checked={importSyncToAudio}
+                      onChange={(e) => setImportSyncToAudio(e.target.checked)}
+                      className="w-3 h-3 accent-orange-500"
+                    />
+                    <span className="text-[10px] text-gray-300">Sync c/ áudio</span>
+                  </label>
+                </div>
+              </div>
+
+              {/* Footer */}
+              <div className="p-3 border-t border-border-light flex gap-2 flex-shrink-0">
+                <button
+                  onClick={() => { setShowImportPreview(false); setImportIsNewProject(false); }}
+                  className="flex-1 btn-secondary py-2 text-xs"
+                  disabled={isImporting}
+                >
+                  Cancelar
+                </button>
+                <button
+                  onClick={handleConfirmImport}
+                  disabled={isImporting}
+                  className="flex-1 py-2 bg-orange-500 hover:bg-orange-600 text-white text-xs font-medium rounded-lg transition-colors disabled:opacity-50 flex items-center justify-center gap-1.5"
+                >
+                  {isImporting ? (
+                    <>
+                      <RefreshCw className="w-3 h-3 animate-spin" />
+                      Importando...
+                    </>
+                  ) : (
+                    <>
+                      {importIsNewProject ? <Plus className="w-3 h-3" /> : <Download className="w-3 h-3" />}
+                      {importIsNewProject ? 'Criar' : 'Importar'}
+                    </>
+                  )}
+                </button>
+              </div>
+            </motion.div>
+          </>
+        )}
+      </AnimatePresence>
+
+      {/* Multi Delete Confirm Modal */}
+      <AnimatePresence>
+        {showMultiDeleteConfirm && (
+          <>
+            {/* Backdrop */}
+            <motion.div
+              initial={{ opacity: 0 }}
+              animate={{ opacity: 1 }}
+              exit={{ opacity: 0 }}
+              className="fixed inset-0 bg-black/80 z-[60]"
+              onClick={() => setShowMultiDeleteConfirm(false)}
+            />
+
+            {/* Modal */}
+            <motion.div
+              initial={{ opacity: 0, scale: 0.95 }}
+              animate={{ opacity: 1, scale: 1 }}
+              exit={{ opacity: 0, scale: 0.95 }}
+              className="fixed inset-0 m-auto w-[400px] h-fit bg-[#0f0f0f] border border-red-500/30 rounded-xl z-[60] overflow-hidden"
+            >
+              <div className="p-6 text-center">
+                <div className="w-16 h-16 rounded-full bg-red-500/20 flex items-center justify-center mx-auto mb-4">
+                  <Trash2 className="w-8 h-8 text-red-400" />
+                </div>
+                <h3 className="text-lg font-bold text-white mb-2">Deletar {selectedProjectsForDelete.size} projeto(s)?</h3>
+                <p className="text-sm text-text-muted mb-4">
+                  Esta ação não pode ser desfeita. Os seguintes projetos serão deletados:
+                </p>
+                <div className="max-h-32 overflow-y-auto mb-4 bg-black/30 rounded-lg p-2">
+                  {Array.from(selectedProjectsForDelete).map(path => (
+                    <div key={path} className="text-xs text-red-400 py-1 truncate">
+                      {path.split(/[/\\]/).pop()}
+                    </div>
+                  ))}
+                </div>
+                <div className="flex gap-3">
+                  <button
+                    onClick={() => setShowMultiDeleteConfirm(false)}
+                    className="flex-1 btn-secondary py-2.5 text-sm"
+                  >
+                    Cancelar
+                  </button>
+                  <button
+                    onClick={handleDeleteMultipleProjects}
+                    className="flex-1 py-2.5 bg-red-500 hover:bg-red-600 text-white text-sm font-medium rounded-lg transition-colors"
+                  >
+                    Sim, deletar todos
+                  </button>
+                </div>
+              </div>
+            </motion.div>
+          </>
+        )}
+
+        {/* Type Delete Confirm Modal */}
+        {showTypeDeleteConfirm && typeToDelete && (
+          <>
+            {/* Backdrop */}
+            <motion.div
+              initial={{ opacity: 0 }}
+              animate={{ opacity: 1 }}
+              exit={{ opacity: 0 }}
+              className="fixed inset-0 bg-black/80 z-[60]"
+              onClick={() => { setShowTypeDeleteConfirm(false); setTypeToDelete(null); }}
+            />
+
+            {/* Modal */}
+            <motion.div
+              initial={{ opacity: 0, scale: 0.95 }}
+              animate={{ opacity: 1, scale: 1 }}
+              exit={{ opacity: 0, scale: 0.95 }}
+              className="fixed inset-0 m-auto w-[400px] h-fit bg-[#0f0f0f] border border-red-500/30 rounded-xl z-[60] overflow-hidden"
+            >
+              <div className="p-6 text-center">
+                <div className="w-16 h-16 rounded-full bg-red-500/20 flex items-center justify-center mx-auto mb-4">
+                  <Trash2 className="w-8 h-8 text-red-400" />
+                </div>
+                <h3 className="text-lg font-bold text-white mb-2">
+                  Apagar {typeToDelete.map(t => t === 'text' ? 'Legendas' : t === 'effect' ? 'Efeitos' : 'Filtros').join(', ')}?
+                </h3>
+                <p className="text-sm text-text-muted mb-6">
+                  Todas as tracks do tipo <span className="text-red-400 font-medium">
+                    {typeToDelete.map(t => t === 'text' ? 'texto/legenda' : t === 'effect' ? 'efeito' : 'filtro').join(', ')}
+                  </span> serão removidas.
+                  <br />Esta ação não pode ser desfeita.
+                </p>
+                <div className="flex gap-3">
+                  <button
+                    onClick={() => { setShowTypeDeleteConfirm(false); setTypeToDelete(null); }}
+                    className="flex-1 btn-secondary py-2.5 text-sm"
+                  >
+                    Cancelar
+                  </button>
+                  <button
+                    onClick={handleDeleteTracksByType}
+                    className="flex-1 py-2.5 bg-red-500 hover:bg-red-600 text-white text-sm font-medium rounded-lg transition-colors"
+                  >
+                    Sim, apagar
                   </button>
                 </div>
               </div>

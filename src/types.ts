@@ -5,9 +5,11 @@ export interface User {
   displayName: string | null
   photoURL: string | null
   isPro: boolean
-  proActivatedBy?: string
+  plan?: string  // 'free', 'trial', 'basic', 'vip'
+  proActivatedBy?: string  // 'trial', 'basic', 'vip', 'trial_expired'
   proActivatedAt?: string
   trialExpiresAt?: string
+  trialDaysRemaining?: number
 }
 
 // CapCut Project types

@@ -1,5 +1,5 @@
 import { motion } from 'framer-motion'
-import { LogOut, ShoppingCart, AlertCircle, UserPlus, ExternalLink } from 'lucide-react'
+import { LogOut, AlertCircle, UserPlus, ExternalLink, MessageCircle } from 'lucide-react'
 import type { User } from '../types'
 
 const { ipcRenderer } = window.require ? window.require('electron') : { ipcRenderer: null }
@@ -19,8 +19,10 @@ export default function NoAccess({ user, reason, onLogout }: NoAccessProps) {
     ipcRenderer?.invoke('open-external', 'https://nardoto-labs.web.app/dashboard.html')
   }
 
-  const handleBuyAccess = () => {
-    ipcRenderer?.invoke('open-external', 'https://nardoto.com.br/capcut-sync-pro')
+  const handleWhatsApp = () => {
+    const phone = '5527999132594'
+    const message = encodeURIComponent('Olá! Gostaria de adquirir acesso ao CapCut Sync Pro.')
+    ipcRenderer?.invoke('open-external', `https://wa.me/${phone}?text=${message}`)
   }
 
   return (
@@ -82,7 +84,7 @@ export default function NoAccess({ user, reason, onLogout }: NoAccessProps) {
           <div className="border-t border-border-light pt-4">
             <p className="text-text-muted text-sm">
               Status: <span className="text-red-400 font-medium">
-                {isNewUser ? 'Não registrado' : 'Sem acesso PRO'}
+                {isNewUser ? 'Não registrado' : 'Sem acesso VIP'}
               </span>
             </p>
           </div>
@@ -100,11 +102,11 @@ export default function NoAccess({ user, reason, onLogout }: NoAccessProps) {
             </button>
           ) : (
             <button
-              onClick={handleBuyAccess}
-              className="btn-primary w-full flex items-center justify-center gap-2"
+              onClick={handleWhatsApp}
+              className="w-full flex items-center justify-center gap-2 bg-green-600 hover:bg-green-700 text-white font-semibold py-3 px-6 rounded-xl transition-all duration-300"
             >
-              <ShoppingCart className="w-5 h-5" />
-              Adquirir Acesso PRO
+              <MessageCircle className="w-5 h-5" />
+              Falar no WhatsApp
             </button>
           )}
 
@@ -127,9 +129,9 @@ export default function NoAccess({ user, reason, onLogout }: NoAccessProps) {
             </>
           ) : (
             <>
-              Já comprou? Aguarde alguns minutos para a ativação.
+              Entre em contato para adquirir seu acesso
               <br />
-              Problemas? Entre em contato pelo WhatsApp.
+              ou renovar seu período de teste.
             </>
           )}
         </p>

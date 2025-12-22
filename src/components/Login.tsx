@@ -64,7 +64,7 @@ export default function Login({ onLogin }: LoginProps) {
         >
           <h2 className="text-xl font-semibold text-white mb-2">Bem-vindo!</h2>
           <p className="text-text-secondary text-sm mb-6">
-            Faça login para acessar sua conta PRO
+            Faça login para acessar o aplicativo
           </p>
 
           <button

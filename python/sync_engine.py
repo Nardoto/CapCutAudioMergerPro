@@ -1131,6 +1131,604 @@ def randomize_existing_media(draft_path):
     except Exception as e:
         return {'error': str(e)}
 
+# ============ IMPORT MEDIA FROM FOLDER ============
+def import_media_folder(draft_path, folder_path, add_animations=True, sync_to_audio=True):
+    """
+    Importa todas as mídias de uma pasta para o projeto CapCut.
+    Detecta automaticamente imagens, vídeos e áudios.
+    Arquivos são ordenados alfabeticamente.
+
+    Args:
+        draft_path: Caminho do draft_content.json
+        folder_path: Pasta contendo as mídias
+        add_animations: Se True, adiciona animações às imagens
+        sync_to_audio: Se True, sincroniza duração das imagens com o áudio total
+    """
+    try:
+        logs = []
+        backup_path = create_backup(draft_path)
+        logs.append(f"[BACKUP] {os.path.basename(backup_path)}")
+
+        with open(draft_path, 'r', encoding='utf-8') as f:
+            projeto = json.load(f)
+
+        if not os.path.exists(folder_path):
+            return {'error': f'Pasta não encontrada: {folder_path}'}
+
+        # Extensões suportadas
+        IMAGE_EXTS = ['.png', '.jpg', '.jpeg', '.webp', '.gif', '.bmp']
+        VIDEO_EXTS = ['.mp4', '.mov', '.avi', '.mkv', '.webm', '.m4v']
+        AUDIO_EXTS = ['.wav', '.mp3', '.m4a', '.aac', '.ogg', '.flac']
+        SUBTITLE_EXTS = ['.srt', '.vtt']
+
+        # Listar e classificar arquivos
+        all_files = []
+        subtitle_files = []
+        for f in os.listdir(folder_path):
+            full_path = os.path.join(folder_path, f)
+            if not os.path.isfile(full_path):
+                continue
+            ext = os.path.splitext(f)[1].lower()
+            if ext in IMAGE_EXTS:
+                all_files.append({'path': full_path, 'name': f, 'type': 'image', 'ext': ext})
+            elif ext in VIDEO_EXTS:
+                all_files.append({'path': full_path, 'name': f, 'type': 'video', 'ext': ext})
+            elif ext in AUDIO_EXTS:
+                all_files.append({'path': full_path, 'name': f, 'type': 'audio', 'ext': ext})
+            elif ext in SUBTITLE_EXTS:
+                subtitle_files.append({'path': full_path, 'name': f, 'ext': ext})
+
+        if not all_files:
+            return {'error': 'Nenhuma mídia encontrada na pasta'}
+
+        # Ordenar alfabeticamente
+        all_files.sort(key=lambda x: x['name'].lower())
+
+        # Separar por tipo
+        images = [f for f in all_files if f['type'] == 'image']
+        videos = [f for f in all_files if f['type'] == 'video']
+        audios = [f for f in all_files if f['type'] == 'audio']
+
+        logs.append(f"[INFO] Encontrados: {len(images)} imagens, {len(videos)} vídeos, {len(audios)} áudios, {len(subtitle_files)} legendas")
+
+        # Calcular duração total dos áudios
+        total_audio_duration = 0
+        audio_durations = []
+        for audio in audios:
+            try:
+                if audio['ext'] == '.wav':
+                    import wave
+                    with wave.open(audio['path'], 'rb') as wav:
+                        frames = wav.getnframes()
+                        rate = wav.getframerate()
+                        dur = int((frames / rate) * 1000000)
+                else:
+                    # Usar ffprobe para outros formatos
+                    import subprocess
+                    cmd = ['ffprobe', '-v', 'quiet', '-print_format', 'json', '-show_format', audio['path']]
+                    result = subprocess.run(cmd, capture_output=True, text=True, timeout=10)
+                    if result.returncode == 0:
+                        info = json.loads(result.stdout)
+                        dur = int(float(info.get('format', {}).get('duration', 5)) * 1000000)
+                    else:
+                        dur = 5000000
+                audio_durations.append(dur)
+                total_audio_duration += dur
+            except:
+                dur = 5000000
+                audio_durations.append(dur)
+                total_audio_duration += dur
+
+        logs.append(f"[INFO] Duração total áudio: {total_audio_duration/1000000:.2f}s")
+
+        # Calcular duração por imagem/vídeo
+        visual_media = images + videos
+        visual_media.sort(key=lambda x: x['name'].lower())
+
+        if sync_to_audio and total_audio_duration > 0 and len(images) > 0 and len(videos) == 0:
+            # Modo sincronizado: distribuir imagens pela duração do áudio
+            image_duration = total_audio_duration // len(images)
+            logs.append(f"[INFO] Modo sincronizado: {image_duration/1000000:.2f}s por imagem")
+        else:
+            # Modo padrão: 5 segundos por imagem
+            image_duration = 5000000
+
+        # Encontrar ou criar track de vídeo
+        video_track_idx = None
+        for idx, track in enumerate(projeto.get('tracks', [])):
+            if track.get('type') == 'video':
+                video_track_idx = idx
+                break
+
+        if video_track_idx is None:
+            projeto.setdefault('tracks', []).insert(0, {
+                "attribute": 0, "flag": 0, "id": str(uuid.uuid4()).upper(),
+                "is_default_name": True, "name": "", "segments": [], "type": "video"
+            })
+            video_track_idx = 0
+            logs.append("[+] Track de vídeo criada")
+
+        # Calcular posição inicial
+        current_time = 0
+        if projeto['tracks'][video_track_idx].get('segments'):
+            last_seg = projeto['tracks'][video_track_idx]['segments'][-1]
+            current_time = last_seg['target_timerange']['start'] + last_seg['target_timerange']['duration']
+
+        start_time = current_time
+
+        # Lista de animações
+        animation_funcs = [
+            criar_keyframe_zoom_in_suave,
+            criar_keyframe_pan_down,
+            criar_keyframe_zoom_out,
+            criar_keyframe_zoom_in_forte,
+            criar_keyframe_pan_down_forte,
+            criar_keyframe_pan_horizontal
+        ]
+
+        # Inserir mídia visual (imagens e vídeos)
+        media_inserted = 0
+        for i, media in enumerate(visual_media):
+            info = get_media_info(media['path'])
+
+            if media['type'] == 'image':
+                duration = image_duration
+                media_type = 'photo'
+            else:
+                duration = info['duration']
+                media_type = info['type']
+
+            # Criar material
+            mat_id, local_mat_id, video_mat = criar_material_video(
+                media['path'], duration, info['width'], info['height'], info['has_audio'], media_type
+            )
+            projeto['materials'].setdefault('videos', []).append(video_mat)
+
+            # Materiais auxiliares
+            aux = criar_materiais_auxiliares_video()
+            projeto['materials'].setdefault('speeds', []).append(aux['speed'])
+            projeto['materials'].setdefault('placeholder_infos', []).append(aux['placeholder'])
+            projeto['materials'].setdefault('canvases', []).append(aux['canvas'])
+            projeto['materials'].setdefault('sound_channel_mappings', []).append(aux['channel'])
+            projeto['materials'].setdefault('material_colors', []).append(aux['color'])
+            projeto['materials'].setdefault('vocal_separations', []).append(aux['vocal'])
+
+            # Criar segmento
+            segment = criar_segmento_video(mat_id, current_time, duration, aux['refs'])
+
+            # Animação para imagens
+            if add_animations and media['type'] == 'image':
+                anim_func = animation_funcs[i % len(animation_funcs)]
+                keyframes = anim_func(duration)
+                for kf in keyframes:
+                    kf['material_id'] = mat_id
+                segment['common_keyframes'] = keyframes
+
+            projeto['tracks'][video_track_idx]['segments'].append(segment)
+            current_time += duration
+            media_inserted += 1
+
+        logs.append(f"[+] {media_inserted} mídias visuais inseridas")
+
+        # Inserir áudios
+        if audios:
+            audio_track_idx = None
+            for idx, track in enumerate(projeto.get('tracks', [])):
+                if track.get('type') == 'audio':
+                    audio_track_idx = idx
+                    break
+
+            if audio_track_idx is None:
+                projeto['tracks'].append({
+                    "attribute": 0, "flag": 0, "id": str(uuid.uuid4()).upper(),
+                    "is_default_name": True, "name": "", "segments": [], "type": "audio"
+                })
+                audio_track_idx = len(projeto['tracks']) - 1
+                logs.append("[+] Track de áudio criada")
+
+            audio_time = start_time
+            for i, audio in enumerate(audios):
+                duration = audio_durations[i]
+
+                mat_id, local_mat_id, audio_mat = criar_material_audio(audio['path'], duration)
+                projeto['materials'].setdefault('audios', []).append(audio_mat)
+
+                aux = criar_materiais_auxiliares_audio()
+                projeto['materials'].setdefault('speeds', []).append(aux['speed'])
+                projeto['materials'].setdefault('placeholder_infos', []).append(aux['placeholder'])
+                projeto['materials'].setdefault('beats', []).append(aux['beat'])
+                projeto['materials'].setdefault('sound_channel_mappings', []).append(aux['channel'])
+                projeto['materials'].setdefault('vocal_separations', []).append(aux['vocal'])
+
+                audio_segment = criar_segmento_audio(mat_id, audio_time, duration, aux['refs'])
+                projeto['tracks'][audio_track_idx]['segments'].append(audio_segment)
+                audio_time += duration
+
+            logs.append(f"[+] {len(audios)} áudios inseridos ({total_audio_duration/1000000:.2f}s)")
+
+        # Inserir legendas (SRT)
+        subtitles_inserted = 0
+        if subtitle_files:
+            # Ordenar legendas alfabeticamente
+            subtitle_files.sort(key=lambda x: x['name'].lower())
+
+            for srt_file in subtitle_files:
+                try:
+                    legendas = parse_srt(srt_file['path'])
+                    if not legendas:
+                        logs.append(f"[SKIP] Legenda vazia: {srt_file['name']}")
+                        continue
+
+                    # Criar track de legenda se não existir
+                    text_track_idx = None
+                    for idx, track in enumerate(projeto.get('tracks', [])):
+                        if track.get('type') == 'text':
+                            text_track_idx = idx
+                            break
+
+                    if text_track_idx is None:
+                        projeto['tracks'].append({
+                            "attribute": 0, "flag": 0, "id": str(uuid.uuid4()).upper(),
+                            "is_default_name": True, "name": "", "segments": [], "type": "text"
+                        })
+                        text_track_idx = len(projeto['tracks']) - 1
+                        logs.append("[+] Track de legenda criada")
+
+                    # Inserir cada legenda
+                    for leg in legendas:
+                        mat_id = str(uuid.uuid4()).upper()
+                        texto = leg['text']
+                        inicio = start_time + leg['start']  # Ajustar para posição inicial das mídias
+                        duracao = leg['duration']  # parse_srt já retorna duration calculado
+
+                        # Criar material de texto
+                        text_mat = {
+                            "add_type": 2,
+                            "alignment": 1,
+                            "background_alpha": 1.0,
+                            "background_color": "",
+                            "background_height": 0.14,
+                            "background_horizontal_offset": 0.0,
+                            "background_round_radius": 0.0,
+                            "background_style": 0,
+                            "background_vertical_offset": 0.0,
+                            "background_width": 0.14,
+                            "bold_width": 0.0,
+                            "border_alpha": 1.0,
+                            "border_color": "",
+                            "border_width": 0.08,
+                            "caption_template_info": {"category_id": "", "category_name": "", "effect_id": "", "is_new": False, "path": "", "request_id": "", "resource_id": "", "resource_name": ""},
+                            "check_flag": 7,
+                            "combo_info": {"text_templates": []},
+                            "content": texto,
+                            "fixed_height": -1.0,
+                            "fixed_width": -1.0,
+                            "font_category_id": "",
+                            "font_category_name": "",
+                            "font_id": "",
+                            "font_name": "",
+                            "font_path": "",
+                            "font_resource_id": "",
+                            "font_size": 8.0,
+                            "font_source_platform": 0,
+                            "font_team_id": "",
+                            "font_title": "none",
+                            "font_url": "",
+                            "fonts": [],
+                            "force_apply_line_max_width": False,
+                            "global_alpha": 1.0,
+                            "group_id": "",
+                            "has_shadow": False,
+                            "id": mat_id,
+                            "initial_scale": 1.0,
+                            "inner_padding": -1.0,
+                            "is_rich_text": False,
+                            "is_subtitle": True,
+                            "is_words_linear": False,
+                            "italic_degree": 0,
+                            "ktv_color": "",
+                            "language": "",
+                            "layer_weight": 1,
+                            "letter_spacing": 0.0,
+                            "line_feed": 1,
+                            "line_max_width": 0.82,
+                            "line_spacing": 0.02,
+                            "multi_language_current": "none",
+                            "name": "",
+                            "original_size": [],
+                            "preset_category": "",
+                            "preset_category_id": "",
+                            "preset_has_set_alignment": False,
+                            "preset_id": "",
+                            "preset_index": 0,
+                            "preset_name": "",
+                            "recognize_task_id": "",
+                            "recognize_type": 0,
+                            "relevance_segment": [],
+                            "shadow_alpha": 0.9,
+                            "shadow_angle": -45.0,
+                            "shadow_color": "",
+                            "shadow_distance": 5.0,
+                            "shadow_point": {"x": 0.6363961030678927, "y": -0.6363961030678927},
+                            "shadow_smoothing": 0.45,
+                            "shape_clip_x": False,
+                            "shape_clip_y": False,
+                            "style_name": "",
+                            "sub_type": 0,
+                            "subtitle_keywords": None,
+                            "subtitle_template_original_fontsize": 0.0,
+                            "text_alpha": 1.0,
+                            "text_color": "#FFFFFF",
+                            "text_curve": None,
+                            "text_preset_resource_id": "",
+                            "text_size": 30,
+                            "text_to_audio_ids": [],
+                            "tts_auto_update": False,
+                            "type": "subtitle",
+                            "typesetting": 0,
+                            "underline": False,
+                            "underline_offset": 0.22,
+                            "underline_width": 0.05,
+                            "use_effect_default_color": True,
+                            "words": {"end_time": [], "start_time": [], "text": []}
+                        }
+                        projeto['materials'].setdefault('texts', []).append(text_mat)
+
+                        # Criar segmento
+                        seg = {
+                            "caption_info": None,
+                            "cartoon": False,
+                            "clip": {"alpha": 1.0, "flip": {"horizontal": False, "vertical": False}, "rotation": 0.0, "scale": {"x": 1.0, "y": 1.0}, "transform": {"x": 0.0, "y": -0.75}},
+                            "common_keyframes": [],
+                            "enable_adjust": True,
+                            "enable_color_correct_adjust": False,
+                            "enable_color_curves": True,
+                            "enable_color_match_adjust": False,
+                            "enable_color_wheels": True,
+                            "enable_lut": True,
+                            "enable_smart_color_adjust": False,
+                            "extra_material_refs": [],
+                            "group_id": "",
+                            "hdr_settings": {"intensity": 1.0, "mode": 1, "nits": 1000},
+                            "id": str(uuid.uuid4()).upper(),
+                            "intensifies_audio": False,
+                            "is_placeholder": False,
+                            "is_tone_modify": False,
+                            "keyframe_refs": [],
+                            "last_nonzero_volume": 1.0,
+                            "material_id": mat_id,
+                            "render_index": 0,
+                            "responsive_layout": {"enable": False, "horizontal_pos_layout": 0, "size_layout": 0, "target_follow": "", "vertical_pos_layout": 0},
+                            "reverse": False,
+                            "source_timerange": {"duration": duracao, "start": 0},
+                            "speed": 1.0,
+                            "target_timerange": {"duration": duracao, "start": inicio},
+                            "template_id": "",
+                            "template_scene": "default",
+                            "track_attribute": 0,
+                            "track_render_index": 0,
+                            "uniform_scale": {"on": True, "value": 1.0},
+                            "visible": True,
+                            "volume": 1.0
+                        }
+                        projeto['tracks'][text_track_idx]['segments'].append(seg)
+                        subtitles_inserted += 1
+
+                    logs.append(f"[+] Legenda importada: {srt_file['name']} ({len(legendas)} textos)")
+                except Exception as e:
+                    logs.append(f"[ERRO] Falha na legenda {srt_file['name']}: {str(e)}")
+
+        # Atualizar duração
+        final_duration = max(current_time, start_time + total_audio_duration)
+        if final_duration > projeto.get('duration', 0):
+            projeto['duration'] = final_duration
+
+        with open(draft_path, 'w', encoding='utf-8') as f:
+            json.dump(projeto, f, indent=2, ensure_ascii=False)
+
+        logs.append(f"[OK] Importação concluída! Duração: {final_duration/1000000:.2f}s")
+
+        return {
+            'success': True,
+            'logs': logs,
+            'stats': {
+                'imagesInserted': len(images),
+                'videosInserted': len(videos),
+                'audiosInserted': len(audios),
+                'subtitlesInserted': subtitles_inserted,
+                'totalDuration': final_duration
+            }
+        }
+    except Exception as e:
+        import traceback
+        return {'error': str(e), 'traceback': traceback.format_exc()}
+
+# ============ INSERT CREATOR CONTENT ============
+def insert_creator_content(draft_path, content_folder, add_animations=True):
+    """
+    Insere conteúdo gerado pelo Creator (imagens + áudio) no projeto.
+    Distribui as imagens uniformemente pela duração do áudio.
+
+    Args:
+        draft_path: Caminho do draft_content.json
+        content_folder: Pasta do projeto gerado (contém imagens/, audio.wav, roteiro.txt)
+        add_animations: Se True, adiciona animações às imagens
+    """
+    try:
+        logs = []
+        backup_path = create_backup(draft_path)
+        logs.append(f"[BACKUP] {os.path.basename(backup_path)}")
+
+        with open(draft_path, 'r', encoding='utf-8') as f:
+            projeto = json.load(f)
+
+        # Verificar arquivos do conteúdo
+        images_folder = os.path.join(content_folder, 'imagens')
+        audio_file = os.path.join(content_folder, 'audio.wav')
+
+        if not os.path.exists(images_folder):
+            return {'error': f'Pasta de imagens não encontrada: {images_folder}'}
+
+        # Listar imagens ordenadas
+        image_files = sorted([
+            os.path.join(images_folder, f)
+            for f in os.listdir(images_folder)
+            if f.lower().endswith(('.png', '.jpg', '.jpeg', '.webp'))
+        ])
+
+        if not image_files:
+            return {'error': 'Nenhuma imagem encontrada na pasta'}
+
+        logs.append(f"[INFO] {len(image_files)} imagens encontradas")
+
+        # Obter duração do áudio
+        audio_duration = 0
+        if os.path.exists(audio_file):
+            try:
+                import wave
+                with wave.open(audio_file, 'rb') as wav:
+                    frames = wav.getnframes()
+                    rate = wav.getframerate()
+                    audio_duration = int((frames / rate) * 1000000)  # microseconds
+                logs.append(f"[INFO] Áudio: {audio_duration/1000000:.2f}s")
+            except Exception as e:
+                logs.append(f"[WARN] Erro ao ler áudio: {e}")
+                # Fallback: 5 segundos por imagem
+                audio_duration = len(image_files) * 5000000
+        else:
+            # Sem áudio: 5 segundos por imagem
+            audio_duration = len(image_files) * 5000000
+            logs.append(f"[INFO] Sem áudio, usando {audio_duration/1000000:.2f}s total")
+
+        # Calcular duração por imagem
+        image_duration = audio_duration // len(image_files)
+        logs.append(f"[INFO] Duração por imagem: {image_duration/1000000:.2f}s")
+
+        # Encontrar ou criar track de vídeo
+        video_track_idx = None
+        for idx, track in enumerate(projeto.get('tracks', [])):
+            if track.get('type') == 'video':
+                video_track_idx = idx
+                break
+
+        if video_track_idx is None:
+            projeto.setdefault('tracks', []).insert(0, {
+                "attribute": 0, "flag": 0, "id": str(uuid.uuid4()).upper(),
+                "is_default_name": True, "name": "", "segments": [], "type": "video"
+            })
+            video_track_idx = 0
+            logs.append("[+] Track de vídeo criada")
+
+        # Calcular posição inicial (final do último segmento ou 0)
+        current_time = 0
+        if projeto['tracks'][video_track_idx].get('segments'):
+            last_seg = projeto['tracks'][video_track_idx]['segments'][-1]
+            current_time = last_seg['target_timerange']['start'] + last_seg['target_timerange']['duration']
+
+        start_time = current_time  # Guardar para o áudio
+
+        # Lista de animações disponíveis
+        animation_funcs = [
+            criar_keyframe_zoom_in_suave,
+            criar_keyframe_pan_down,
+            criar_keyframe_zoom_out,
+            criar_keyframe_zoom_in_forte,
+            criar_keyframe_pan_down_forte,
+            criar_keyframe_pan_horizontal
+        ]
+
+        # Inserir imagens
+        for i, file_path in enumerate(image_files):
+            info = get_media_info(file_path)
+
+            # Criar material de vídeo/imagem
+            mat_id, local_mat_id, video_mat = criar_material_video(
+                file_path, image_duration, info['width'], info['height'], False, 'photo'
+            )
+            projeto['materials'].setdefault('videos', []).append(video_mat)
+
+            # Criar materiais auxiliares
+            aux = criar_materiais_auxiliares_video()
+            projeto['materials'].setdefault('speeds', []).append(aux['speed'])
+            projeto['materials'].setdefault('placeholder_infos', []).append(aux['placeholder'])
+            projeto['materials'].setdefault('canvases', []).append(aux['canvas'])
+            projeto['materials'].setdefault('sound_channel_mappings', []).append(aux['channel'])
+            projeto['materials'].setdefault('material_colors', []).append(aux['color'])
+            projeto['materials'].setdefault('vocal_separations', []).append(aux['vocal'])
+
+            # Criar segmento
+            segment = criar_segmento_video(mat_id, current_time, image_duration, aux['refs'])
+
+            # Adicionar animação
+            if add_animations:
+                anim_func = animation_funcs[i % len(animation_funcs)]
+                keyframes = anim_func(image_duration)
+                for kf in keyframes:
+                    kf['material_id'] = mat_id
+                segment['common_keyframes'] = keyframes
+
+            projeto['tracks'][video_track_idx]['segments'].append(segment)
+            current_time += image_duration
+
+        logs.append(f"[+] {len(image_files)} imagens inseridas")
+
+        # Inserir áudio se existir
+        if os.path.exists(audio_file):
+            # Criar track de áudio
+            audio_track_idx = None
+            for idx, track in enumerate(projeto.get('tracks', [])):
+                if track.get('type') == 'audio':
+                    audio_track_idx = idx
+                    break
+
+            if audio_track_idx is None:
+                projeto['tracks'].append({
+                    "attribute": 0, "flag": 0, "id": str(uuid.uuid4()).upper(),
+                    "is_default_name": True, "name": "", "segments": [], "type": "audio"
+                })
+                audio_track_idx = len(projeto['tracks']) - 1
+                logs.append("[+] Track de áudio criada")
+
+            # Criar material de áudio
+            mat_id, local_mat_id, audio_mat = criar_material_audio(audio_file, audio_duration)
+            projeto['materials'].setdefault('audios', []).append(audio_mat)
+
+            # Criar materiais auxiliares do áudio
+            aux = criar_materiais_auxiliares_audio()
+            projeto['materials'].setdefault('speeds', []).append(aux['speed'])
+            projeto['materials'].setdefault('placeholder_infos', []).append(aux['placeholder'])
+            projeto['materials'].setdefault('beats', []).append(aux['beat'])
+            projeto['materials'].setdefault('sound_channel_mappings', []).append(aux['channel'])
+            projeto['materials'].setdefault('vocal_separations', []).append(aux['vocal'])
+
+            # Criar segmento de áudio
+            audio_segment = criar_segmento_audio(mat_id, start_time, audio_duration, aux['refs'])
+            projeto['tracks'][audio_track_idx]['segments'].append(audio_segment)
+            logs.append(f"[+] Áudio inserido ({audio_duration/1000000:.2f}s)")
+
+        # Atualizar duração do projeto
+        if current_time > projeto.get('duration', 0):
+            projeto['duration'] = current_time
+
+        # Salvar
+        with open(draft_path, 'w', encoding='utf-8') as f:
+            json.dump(projeto, f, indent=2, ensure_ascii=False)
+
+        logs.append(f"[OK] Conteúdo inserido! Duração total: {current_time/1000000:.2f}s")
+
+        return {
+            'success': True,
+            'logs': logs,
+            'stats': {
+                'imagesInserted': len(image_files),
+                'audioInserted': os.path.exists(audio_file),
+                'totalDuration': current_time
+            }
+        }
+    except Exception as e:
+        import traceback
+        return {'error': str(e), 'traceback': traceback.format_exc()}
+
 # ============ MAIN ============
 if __name__ == '__main__':
     if len(sys.argv) < 2:
@@ -1153,6 +1751,8 @@ if __name__ == '__main__':
         elif action == 'insert_media': r = insert_media_batch(cmd['draftPath'], cmd.get('mediaFiles', []), cmd.get('imageDuration', 5000000))
         elif action == 'insert_audio': r = insert_audio_batch(cmd['draftPath'], cmd.get('audioFiles', []), cmd.get('useExistingTrack', False), cmd.get('trackIndex'))
         elif action == 'randomize_media': r = randomize_existing_media(cmd['draftPath'])
+        elif action == 'insert_creator': r = insert_creator_content(cmd['draftPath'], cmd['contentFolder'], cmd.get('addAnimations', True))
+        elif action == 'import_folder': r = import_media_folder(cmd['draftPath'], cmd['folderPath'], cmd.get('addAnimations', True), cmd.get('syncToAudio', True))
         else: r = {'error': f'Ação: {action}?'}
         print(json.dumps(r, ensure_ascii=False))
     except Exception as e:

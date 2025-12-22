@@ -7,6 +7,8 @@ interface TimelinePreviewProps {
   selectedAudioTrack: number
   onTrackClick?: (trackIndex: number, trackType: string) => void
   onDeleteTrack?: (trackIndex: number) => void
+  activeTab?: string
+  mediaInsertMode?: 'video_image' | 'audio'
 }
 
 // Cores exatas do CapCut (extraídas da interface)
@@ -38,7 +40,13 @@ interface EnrichedSegment {
   materialName?: string
 }
 
-export default function TimelinePreview({ tracks, selectedAudioTrack, onTrackClick, onDeleteTrack }: TimelinePreviewProps) {
+export default function TimelinePreview({ tracks, selectedAudioTrack, onTrackClick, onDeleteTrack, activeTab, mediaInsertMode }: TimelinePreviewProps) {
+
+  // Find first video track index for highlighting
+  const firstVideoTrackIndex = useMemo(() => {
+    const videoTrack = tracks.find(t => t.type === 'video')
+    return videoTrack?.index ?? -1
+  }, [tracks])
 
   const sortedTracks = useMemo(() => {
     const order = ['filter', 'effect', 'sticker', 'text', 'subtitle', 'video', 'audio']
@@ -73,7 +81,20 @@ export default function TimelinePreview({ tracks, selectedAudioTrack, onTrackCli
       {/* Tracks */}
       <div className="space-y-1">
         {sortedTracks.map((track) => {
-          const isSelected = track.type === 'audio' && track.index === selectedAudioTrack
+          // Determine if this track should be highlighted
+          const isInMediaTab = activeTab === 'media'
+          const isVideoMode = mediaInsertMode === 'video_image'
+          const isAudioMode = mediaInsertMode === 'audio'
+
+          // Highlight video track when in media tab with video/image mode
+          const isVideoHighlighted = isInMediaTab && isVideoMode && track.type === 'video' && track.index === firstVideoTrackIndex
+          // Highlight audio track when in media tab with audio mode OR in other tabs (sync, loop)
+          const isAudioHighlighted = track.type === 'audio' && track.index === selectedAudioTrack &&
+            (!isInMediaTab || (isInMediaTab && isAudioMode))
+
+          const isSelected = isVideoHighlighted || isAudioHighlighted
+          const highlightLabel = isVideoHighlighted ? 'VIDEO' : (isAudioHighlighted ? 'REF' : null)
+
           const color = trackColors[track.type] || '#666'
           const segments = (track.segmentsData || []) as EnrichedSegment[]
 
@@ -150,9 +171,11 @@ export default function TimelinePreview({ tracks, selectedAudioTrack, onTrackCli
                     }}
                   />
                 )}
-                {isSelected && (
+                {isSelected && highlightLabel && (
                   <div className="absolute inset-0 flex items-center justify-end pr-6 pointer-events-none">
-                    <span className="text-[9px] font-bold text-white bg-primary px-1.5 py-0.5 rounded shadow-lg border border-white/30">REF</span>
+                    <span className={`text-[9px] font-bold text-white px-1.5 py-0.5 rounded shadow-lg border border-white/30 ${
+                      highlightLabel === 'VIDEO' ? 'bg-green-600' : 'bg-primary'
+                    }`}>{highlightLabel}</span>
                   </div>
                 )}
                 {/* Delete button on bar */}
