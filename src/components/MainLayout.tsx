@@ -73,6 +73,7 @@ export default function MainLayout({ user, onLogout }: MainLayoutProps) {
   const [importMedia, setImportMedia] = useState<{ images: string[]; videos: string[]; audios: string[]; subtitles?: string[] } | null>(null)
   const [importAddAnimations, setImportAddAnimations] = useState(true)
   const [importSyncToAudio, setImportSyncToAudio] = useState(true)
+  const [importSeparateAudioTracks, setImportSeparateAudioTracks] = useState(false)
   const [isImporting, setIsImporting] = useState(false)
   const [isExporting, setIsExporting] = useState(false)
   const [photoError, setPhotoError] = useState(false)
@@ -691,7 +692,8 @@ export default function MainLayout({ user, onLogout }: MainLayoutProps) {
         draftPath: targetDraftPath,
         folderPath: importFolderPath,
         addAnimations: importAddAnimations,
-        syncToAudio: importSyncToAudio
+        syncToAudio: importSyncToAudio,
+        separateAudioTracks: importSeparateAudioTracks
       })
 
       if (result.success) {
@@ -723,6 +725,7 @@ export default function MainLayout({ user, onLogout }: MainLayoutProps) {
         setImportFolderPath(null)
         setImportMedia(null)
         setImportIsNewProject(false)
+        setImportSeparateAudioTracks(false)
 
         // Reanalisar para atualizar tracks
         const analyzeResult = await ipcRenderer.invoke('run-python', {
@@ -2492,7 +2495,7 @@ export default function MainLayout({ user, onLogout }: MainLayoutProps) {
               animate={{ opacity: 1 }}
               exit={{ opacity: 0 }}
               className="fixed inset-0 bg-black/80 z-[60]"
-              onClick={() => { setShowImportPreview(false); setImportIsNewProject(false); }}
+              onClick={() => { setShowImportPreview(false); setImportIsNewProject(false); setImportSeparateAudioTracks(false); }}
             />
             <motion.div
               initial={{ opacity: 0, scale: 0.95 }}
@@ -2576,7 +2579,7 @@ export default function MainLayout({ user, onLogout }: MainLayoutProps) {
                 )}
 
                 {/* Options */}
-                <div className="flex gap-4 pt-1">
+                <div className="flex flex-wrap gap-x-4 gap-y-2 pt-1">
                   <label className="flex items-center gap-1.5 cursor-pointer">
                     <input
                       type="checkbox"
@@ -2595,13 +2598,25 @@ export default function MainLayout({ user, onLogout }: MainLayoutProps) {
                     />
                     <span className="text-[10px] text-gray-300">Sync c/ áudio</span>
                   </label>
+                  {/* Show separate tracks option when 2+ audios */}
+                  {importMedia && importMedia.audios && importMedia.audios.length >= 2 && (
+                    <label className="flex items-center gap-1.5 cursor-pointer">
+                      <input
+                        type="checkbox"
+                        checked={importSeparateAudioTracks}
+                        onChange={(e) => setImportSeparateAudioTracks(e.target.checked)}
+                        className="w-3 h-3 accent-blue-500"
+                      />
+                      <span className="text-[10px] text-blue-300">Tracks separadas</span>
+                    </label>
+                  )}
                 </div>
               </div>
 
               {/* Footer */}
               <div className="p-3 border-t border-border-light flex gap-2 flex-shrink-0">
                 <button
-                  onClick={() => { setShowImportPreview(false); setImportIsNewProject(false); }}
+                  onClick={() => { setShowImportPreview(false); setImportIsNewProject(false); setImportSeparateAudioTracks(false); }}
                   className="flex-1 btn-secondary py-2 text-xs"
                   disabled={isImporting}
                 >

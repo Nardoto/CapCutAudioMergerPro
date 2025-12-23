@@ -1552,13 +1552,14 @@ ipcMain.handle('insert-creator-content', async (_, { draftPath, contentFolder, a
 });
 
 // ============ IMPORT MEDIA FOLDER ============
-ipcMain.handle('import-media-folder', async (_, { draftPath, folderPath, addAnimations, syncToAudio }) => {
+ipcMain.handle('import-media-folder', async (_, { draftPath, folderPath, addAnimations, syncToAudio, separateAudioTracks }) => {
   return runPython({
     action: 'import_folder',
     draftPath,
     folderPath,
     addAnimations: addAnimations !== false,
-    syncToAudio: syncToAudio !== false
+    syncToAudio: syncToAudio !== false,
+    separateAudioTracks: separateAudioTracks === true
   });
 });
 

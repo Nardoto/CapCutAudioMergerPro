@@ -1193,7 +1193,7 @@ def randomize_existing_media(draft_path):
         return {'error': str(e)}
 
 # ============ IMPORT MEDIA FROM FOLDER ============
-def import_media_folder(draft_path, folder_path, add_animations=True, sync_to_audio=True):
+def import_media_folder(draft_path, folder_path, add_animations=True, sync_to_audio=True, separate_audio_tracks=False):
     """
     Importa todas as mídias de uma pasta para o projeto CapCut.
     Detecta automaticamente imagens, vídeos e áudios.
@@ -1204,6 +1204,7 @@ def import_media_folder(draft_path, folder_path, add_animations=True, sync_to_au
         folder_path: Pasta contendo as mídias
         add_animations: Se True, adiciona animações às imagens
         sync_to_audio: Se True, sincroniza duração das imagens com o áudio total
+        separate_audio_tracks: Se True, cria uma track separada para cada áudio
     """
     try:
         logs = []
@@ -1373,39 +1374,70 @@ def import_media_folder(draft_path, folder_path, add_animations=True, sync_to_au
 
         # Inserir áudios
         if audios:
-            audio_track_idx = None
-            for idx, track in enumerate(projeto.get('tracks', [])):
-                if track.get('type') == 'audio':
-                    audio_track_idx = idx
-                    break
+            if separate_audio_tracks and len(audios) > 1:
+                # MODO: Tracks separadas - cada áudio em sua própria track
+                logs.append(f"[INFO] Modo: tracks separadas ({len(audios)} tracks)")
 
-            if audio_track_idx is None:
-                projeto['tracks'].append({
-                    "attribute": 0, "flag": 0, "id": str(uuid.uuid4()).upper(),
-                    "is_default_name": True, "name": "", "segments": [], "type": "audio"
-                })
-                audio_track_idx = len(projeto['tracks']) - 1
-                logs.append("[+] Track de áudio criada")
+                for i, audio in enumerate(audios):
+                    duration = audio_durations[i]
 
-            audio_time = start_time
-            for i, audio in enumerate(audios):
-                duration = audio_durations[i]
+                    # Criar nova track para cada áudio
+                    projeto['tracks'].append({
+                        "attribute": 0, "flag": 0, "id": str(uuid.uuid4()).upper(),
+                        "is_default_name": True, "name": "", "segments": [], "type": "audio"
+                    })
+                    audio_track_idx = len(projeto['tracks']) - 1
 
-                mat_id, local_mat_id, audio_mat = criar_material_audio(audio['path'], duration)
-                projeto['materials'].setdefault('audios', []).append(audio_mat)
+                    mat_id, local_mat_id, audio_mat = criar_material_audio(audio['path'], duration)
+                    projeto['materials'].setdefault('audios', []).append(audio_mat)
 
-                aux = criar_materiais_auxiliares_audio()
-                projeto['materials'].setdefault('speeds', []).append(aux['speed'])
-                projeto['materials'].setdefault('placeholder_infos', []).append(aux['placeholder'])
-                projeto['materials'].setdefault('beats', []).append(aux['beat'])
-                projeto['materials'].setdefault('sound_channel_mappings', []).append(aux['channel'])
-                projeto['materials'].setdefault('vocal_separations', []).append(aux['vocal'])
+                    aux = criar_materiais_auxiliares_audio()
+                    projeto['materials'].setdefault('speeds', []).append(aux['speed'])
+                    projeto['materials'].setdefault('placeholder_infos', []).append(aux['placeholder'])
+                    projeto['materials'].setdefault('beats', []).append(aux['beat'])
+                    projeto['materials'].setdefault('sound_channel_mappings', []).append(aux['channel'])
+                    projeto['materials'].setdefault('vocal_separations', []).append(aux['vocal'])
 
-                audio_segment = criar_segmento_audio(mat_id, audio_time, duration, aux['refs'])
-                projeto['tracks'][audio_track_idx]['segments'].append(audio_segment)
-                audio_time += duration
+                    # Todos os áudios começam no mesmo ponto (start_time)
+                    audio_segment = criar_segmento_audio(mat_id, start_time, duration, aux['refs'])
+                    projeto['tracks'][audio_track_idx]['segments'].append(audio_segment)
 
-            logs.append(f"[+] {len(audios)} áudios inseridos ({total_audio_duration/1000000:.2f}s)")
+                logs.append(f"[+] {len(audios)} áudios em tracks separadas")
+            else:
+                # MODO: Mesma track - todos os áudios sequencialmente na mesma track
+                audio_track_idx = None
+                for idx, track in enumerate(projeto.get('tracks', [])):
+                    if track.get('type') == 'audio':
+                        audio_track_idx = idx
+                        break
+
+                if audio_track_idx is None:
+                    projeto['tracks'].append({
+                        "attribute": 0, "flag": 0, "id": str(uuid.uuid4()).upper(),
+                        "is_default_name": True, "name": "", "segments": [], "type": "audio"
+                    })
+                    audio_track_idx = len(projeto['tracks']) - 1
+                    logs.append("[+] Track de áudio criada")
+
+                audio_time = start_time
+                for i, audio in enumerate(audios):
+                    duration = audio_durations[i]
+
+                    mat_id, local_mat_id, audio_mat = criar_material_audio(audio['path'], duration)
+                    projeto['materials'].setdefault('audios', []).append(audio_mat)
+
+                    aux = criar_materiais_auxiliares_audio()
+                    projeto['materials'].setdefault('speeds', []).append(aux['speed'])
+                    projeto['materials'].setdefault('placeholder_infos', []).append(aux['placeholder'])
+                    projeto['materials'].setdefault('beats', []).append(aux['beat'])
+                    projeto['materials'].setdefault('sound_channel_mappings', []).append(aux['channel'])
+                    projeto['materials'].setdefault('vocal_separations', []).append(aux['vocal'])
+
+                    audio_segment = criar_segmento_audio(mat_id, audio_time, duration, aux['refs'])
+                    projeto['tracks'][audio_track_idx]['segments'].append(audio_segment)
+                    audio_time += duration
+
+                logs.append(f"[+] {len(audios)} áudios inseridos ({total_audio_duration/1000000:.2f}s)")
 
         # Inserir legendas (SRT)
         subtitles_inserted = 0
@@ -1844,7 +1876,7 @@ if __name__ == '__main__':
         elif action == 'insert_audio': r = insert_audio_batch(cmd['draftPath'], cmd.get('audioFiles', []), cmd.get('useExistingTrack', False), cmd.get('trackIndex'))
         elif action == 'randomize_media': r = randomize_existing_media(cmd['draftPath'])
         elif action == 'insert_creator': r = insert_creator_content(cmd['draftPath'], cmd['contentFolder'], cmd.get('addAnimations', True))
-        elif action == 'import_folder': r = import_media_folder(cmd['draftPath'], cmd['folderPath'], cmd.get('addAnimations', True), cmd.get('syncToAudio', True))
+        elif action == 'import_folder': r = import_media_folder(cmd['draftPath'], cmd['folderPath'], cmd.get('addAnimations', True), cmd.get('syncToAudio', True), cmd.get('separateAudioTracks', False))
         else: r = {'error': f'Ação: {action}?'}
         print(json.dumps(r, ensure_ascii=False))
     except Exception as e:
