@@ -118,6 +118,7 @@ def generate_content(params):
     qtd_imagens = int(params.get('qtdImagens', 5))
     pasta_saida = params.get('pastaSaida')
     progress_file = params.get('progressFile')
+    gerar_imagens = params.get('gerarImagens', True)  # Por padrao gera imagens
 
     if not api_key:
         return {"success": False, "error": "API Key not provided"}
@@ -126,6 +127,13 @@ def generate_content(params):
 
     # Criar cliente
     client = genai.Client(api_key=api_key)
+
+    # Contadores de uso da API
+    api_usage = {
+        "texto": 0,    # Chamadas de geracao de texto (gemini-2.0-flash)
+        "imagens": 0,  # Chamadas de geracao de imagem (gemini-2.5-flash-preview-image)
+        "tts": 0       # Chamadas de TTS (gemini-2.5-flash-preview-tts)
+    }
 
     # Criar pasta do projeto com numero sequencial (001, 002, etc)
     existing_folders = [f for f in os.listdir(pasta_saida) if os.path.isdir(os.path.join(pasta_saida, f)) and f.isdigit() and len(f) == 3]
@@ -219,6 +227,7 @@ Retorne APENAS narracao em portugues."""
         })
 
         response = client.models.generate_content(model="gemini-2.0-flash", contents=prompt)
+        api_usage["texto"] += 1
         roteiro_partes.append(response.text.strip())
 
         # Salvar resposta na documentacao
@@ -244,8 +253,11 @@ Retorne APENAS narracao em portugues."""
 
     update_progress(progress_file, 20, f"Roteiro pronto: {len(roteiro)} chars", project_path=projeto_pasta)
 
-    # ========== PASSO 2: GERAR IMAGENS ==========
-    update_progress(progress_file, 25, f"Gerando {qtd_imagens} imagens...", project_path=projeto_pasta)
+    # ========== PASSO 2: GERAR PROMPTS DE IMAGENS ==========
+    if gerar_imagens:
+        update_progress(progress_file, 25, f"Gerando {qtd_imagens} imagens...", project_path=projeto_pasta)
+    else:
+        update_progress(progress_file, 25, f"Gerando prompts para {qtd_imagens} imagens...", project_path=projeto_pasta)
 
     estilo_config = ESTILOS_IMAGEM.get(estilo, ESTILOS_IMAGEM["Fotografia Profissional"])
     style_prefix = estilo_config["prefix"]
@@ -260,80 +272,101 @@ Return ONLY prompts, one per line."""
     projeto_doc["prompts_enviados"]["imagens_meta"] = prompt_prompts
 
     response = client.models.generate_content(model="gemini-2.0-flash", contents=prompt_prompts)
+    api_usage["texto"] += 1
     prompts_lista = [p.strip().strip('"').strip("'") for p in response.text.strip().split('\n')
                     if p.strip() and len(p.strip()) > 10][:qtd_imagens]
 
     while len(prompts_lista) < qtd_imagens:
         prompts_lista.append(tema)
 
-    # Documentar prompts das imagens
+    # Funcao para limpar nome de arquivo
+    def limpar_nome_arquivo(texto, max_chars=50):
+        """Remove caracteres invalidos e limita tamanho"""
+        # Caracteres invalidos para nomes de arquivo
+        chars_invalidos = ['<', '>', ':', '"', '/', '\\', '|', '?', '*', '\n', '\r']
+        nome = texto
+        for char in chars_invalidos:
+            nome = nome.replace(char, '')
+        # Limitar tamanho e remover espacos extras
+        nome = ' '.join(nome.split())[:max_chars].strip()
+        # Substituir espacos por underscores
+        nome = nome.replace(' ', '_')
+        return nome
+
+    # Documentar e salvar prompts das imagens (SEMPRE salva, mesmo sem gerar imagens)
     projeto_doc["prompts_enviados"]["imagens"] = []
+    prompts_salvos = []
+
+    for index, prompt in enumerate(prompts_lista):
+        full_prompt = f"{style_prefix} {prompt}, {style_suffix}"
+        nome_arquivo = f"{index+1:02d}_{limpar_nome_arquivo(full_prompt)}.png"
+
+        prompt_info = {
+            "index": index + 1,
+            "prompt_base": prompt,
+            "prompt_completo": full_prompt,
+            "estilo": estilo,
+            "nome_arquivo": nome_arquivo
+        }
+        projeto_doc["prompts_enviados"]["imagens"].append(prompt_info)
+        prompts_salvos.append(prompt_info)
+
+    # Salvar arquivo de prompts para uso posterior
+    with open(os.path.join(projeto_pasta, "prompts_imagens.json"), 'w', encoding='utf-8') as f:
+        json.dump(prompts_salvos, f, ensure_ascii=False, indent=2)
+
+    # Salvar prompts em formato texto tambem
+    with open(os.path.join(projeto_pasta, "prompts_imagens.txt"), 'w', encoding='utf-8') as f:
+        for p in prompts_salvos:
+            f.write(f"[{p['index']:02d}] {p['nome_arquivo']}\n")
+            f.write(f"Prompt: {p['prompt_completo']}\n\n")
 
     imagens_geradas = 0
 
-    def gerar_imagem(prompt, index):
-        nonlocal imagens_geradas
-        try:
-            full_prompt = f"{style_prefix} {prompt}, {style_suffix}"
-
-            # Documentar prompt completo
-            projeto_doc["prompts_enviados"]["imagens"].append({
-                "index": index + 1,
-                "prompt_base": prompt,
-                "prompt_completo": full_prompt,
-                "estilo": estilo
-            })
-
-            # Tentar Imagen 4 primeiro
+    # So gera imagens se gerar_imagens for True
+    if gerar_imagens:
+        def gerar_imagem(prompt_info):
+            nonlocal imagens_geradas
             try:
-                img_response = client.models.generate_images(
-                    model="imagen-4.0-generate-001",
-                    prompt=full_prompt,
-                    config=types.GenerateImagesConfig(number_of_images=1, aspect_ratio=aspecto)
-                )
-                if img_response.generated_images:
-                    img_data = img_response.generated_images[0].image.image_bytes
-                    if isinstance(img_data, str):
-                        img_data = base64.b64decode(img_data)
-                    img_path = os.path.join(projeto_pasta, "imagens", f"imagem_{index+1:02d}.png")
-                    with open(img_path, 'wb') as f:
-                        f.write(img_data)
-                    return True
-            except:
-                pass
+                full_prompt = prompt_info["prompt_completo"]
+                nome_arquivo = prompt_info["nome_arquivo"]
 
-            # Fallback: Gemini 2.5 Flash Image
-            img_response = client.models.generate_content(
-                model="gemini-2.5-flash-image",
-                contents=full_prompt,
-                config=types.GenerateContentConfig(
-                    response_modalities=["TEXT", "IMAGE"],
-                    image_config=types.ImageConfig(aspect_ratio=aspecto)
+                # Usar Gemini 2.5 Flash Image (GRATUITO - limite diario, suporta 16:9)
+                img_response = client.models.generate_content(
+                    model="gemini-2.5-flash-preview-image",
+                    contents=f"Generate an image: {full_prompt}",
+                    config=types.GenerateContentConfig(
+                        response_modalities=["IMAGE"],
+                        image_config=types.ImageConfig(aspect_ratio=aspecto)
+                    )
                 )
-            )
-            for part in img_response.candidates[0].content.parts:
-                if hasattr(part, 'inline_data') and part.inline_data:
-                    img_data = part.inline_data.data
-                    if isinstance(img_data, str):
-                        img_data = base64.b64decode(img_data)
-                    img_path = os.path.join(projeto_pasta, "imagens", f"imagem_{index+1:02d}.png")
-                    with open(img_path, 'wb') as f:
-                        f.write(img_data)
-                    return True
-            return False
-        except:
-            return False
+                api_usage["imagens"] += 1
+                for part in img_response.candidates[0].content.parts:
+                    if hasattr(part, 'inline_data') and part.inline_data:
+                        img_data = part.inline_data.data
+                        if isinstance(img_data, str):
+                            img_data = base64.b64decode(img_data)
+                        img_path = os.path.join(projeto_pasta, "imagens", nome_arquivo)
+                        with open(img_path, 'wb') as f:
+                            f.write(img_data)
+                        return True
+                return False
+            except Exception as e:
+                return False
 
-    # Processar em lotes de 5
-    for i in range(0, len(prompts_lista), 5):
-        lote = prompts_lista[i:i+5]
-        with ThreadPoolExecutor(max_workers=5) as executor:
-            futures = {executor.submit(gerar_imagem, p, i+j): j for j, p in enumerate(lote)}
-            for future in as_completed(futures):
-                if future.result():
-                    imagens_geradas += 1
-        prog = 25 + (45 * min(i + 5, qtd_imagens) / qtd_imagens)
-        update_progress(progress_file, prog, f"Imagens: {imagens_geradas}/{qtd_imagens}", project_path=projeto_pasta)
+        # Processar em lotes de 5
+        for i in range(0, len(prompts_salvos), 5):
+            lote = prompts_salvos[i:i+5]
+            with ThreadPoolExecutor(max_workers=5) as executor:
+                futures = {executor.submit(gerar_imagem, p): j for j, p in enumerate(lote)}
+                for future in as_completed(futures):
+                    if future.result():
+                        imagens_geradas += 1
+            prog = 25 + (45 * min(i + 5, qtd_imagens) / qtd_imagens)
+            update_progress(progress_file, prog, f"Imagens: {imagens_geradas}/{qtd_imagens}", project_path=projeto_pasta)
+    else:
+        # Pular geracao de imagens
+        update_progress(progress_file, 70, f"Prompts salvos: {len(prompts_salvos)} (imagens nao geradas)", project_path=projeto_pasta)
 
     update_progress(progress_file, 70, "Gerando audio...", project_path=projeto_pasta)
 
@@ -388,6 +421,7 @@ Return ONLY prompts, one per line."""
                     )
                 )
             )
+            api_usage["tts"] += 1
             for part in tts_response.candidates[0].content.parts:
                 if hasattr(part, 'inline_data') and part.inline_data:
                     raw_data = part.inline_data.data
@@ -482,11 +516,15 @@ Return ONLY prompts, one per line."""
         "projectPath": projeto_pasta,
         "scriptLength": len(roteiro),
         "imagesGenerated": imagens_geradas,
+        "imagesRequested": qtd_imagens,
+        "imagesSkipped": not gerar_imagens,
+        "promptsSaved": len(prompts_salvos),
         "audioGenerated": audio_ok,
         "audioPartsOk": partes_ok,
         "audioPartsTotal": len(chunks),
         "audioErrors": audio_errors,
-        "chunksInfo": chunks_info
+        "chunksInfo": chunks_info,
+        "apiUsage": api_usage
     }
 
 

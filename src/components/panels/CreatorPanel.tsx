@@ -134,6 +134,7 @@ export default function CreatorPanel({ onLog, isPro, draftPath, onReanalyze }: C
 
   // Options
   const [addAnimations, setAddAnimations] = useState(true)
+  const [gerarImagens, setGerarImagens] = useState(true)
 
   // Voice preview
   const [isPlayingVoice, setIsPlayingVoice] = useState<string | false>(false)
@@ -146,12 +147,35 @@ export default function CreatorPanel({ onLog, isPro, draftPath, onReanalyze }: C
   const [audioChunks, setAudioChunks] = useState<any[]>([])
   const [playingAudioPart, setPlayingAudioPart] = useState<number | null>(null)
 
-  // Load saved API key
+  // Daily usage counter
+  const [dailyUsage, setDailyUsage] = useState<{
+    texto: number
+    imagens: number
+    tts: number
+    date: string
+  }>({ texto: 0, imagens: 0, tts: 0, date: '' })
+
+  // Load saved API key and daily usage
   useEffect(() => {
     const saved = localStorage.getItem('google_api_key')
     if (saved) setApiKey(saved)
     const savedFolder = localStorage.getItem('creator_output_folder')
     if (savedFolder) setPastaSaida(savedFolder)
+
+    // Load daily usage
+    const today = new Date().toISOString().split('T')[0]
+    const savedUsage = localStorage.getItem('creator_daily_usage')
+    if (savedUsage) {
+      const usage = JSON.parse(savedUsage)
+      // Reset if it's a new day
+      if (usage.date !== today) {
+        setDailyUsage({ texto: 0, imagens: 0, tts: 0, date: today })
+      } else {
+        setDailyUsage(usage)
+      }
+    } else {
+      setDailyUsage({ texto: 0, imagens: 0, tts: 0, date: today })
+    }
   }, [])
 
   // Load preview when result is ready
@@ -316,6 +340,7 @@ export default function CreatorPanel({ onLog, isPro, draftPath, onReanalyze }: C
       tamanhoRoteiro,
       qtdImagens: parseInt(qtdImagens),
       pastaSaida,
+      gerarImagens,
     })
 
     if (!progressFile) {
@@ -379,6 +404,19 @@ export default function CreatorPanel({ onLog, isPro, draftPath, onReanalyze }: C
         setProgress(100)
         setStatus('Concluido!')
         onLog('success', `Conteudo gerado em: ${response.projectPath}`)
+
+        // Update daily usage counters
+        if (response.apiUsage) {
+          const today = new Date().toISOString().split('T')[0]
+          const newUsage = {
+            texto: dailyUsage.texto + (response.apiUsage.texto || 0),
+            imagens: dailyUsage.imagens + (response.apiUsage.imagens || 0),
+            tts: dailyUsage.tts + (response.apiUsage.tts || 0),
+            date: today
+          }
+          setDailyUsage(newUsage)
+          localStorage.setItem('creator_daily_usage', JSON.stringify(newUsage))
+        }
       } else {
         onLog('error', response.error || 'Erro na geracao')
         setStatus('Erro!')
@@ -484,6 +522,22 @@ export default function CreatorPanel({ onLog, isPro, draftPath, onReanalyze }: C
           >
             Obter API Key gratuita
           </a>
+        </div>
+
+        {/* Daily Usage Counter */}
+        <div className="bg-background-dark-alt/50 rounded-lg p-2 border border-border-light/30">
+          <div className="text-[10px] font-medium text-orange-400 mb-1.5">Uso Diario (limite gratuito)</div>
+          <div className="flex gap-2 text-[10px]">
+            <div className={`flex-1 px-2 py-1 rounded ${dailyUsage.texto > 400 ? 'bg-red-500/20 text-red-400' : dailyUsage.texto > 250 ? 'bg-yellow-500/20 text-yellow-400' : 'bg-green-500/20 text-green-400'}`}>
+              <span className="font-medium">Texto:</span> {dailyUsage.texto}/500
+            </div>
+            <div className={`flex-1 px-2 py-1 rounded ${dailyUsage.imagens > 80 ? 'bg-red-500/20 text-red-400' : dailyUsage.imagens > 50 ? 'bg-yellow-500/20 text-yellow-400' : 'bg-green-500/20 text-green-400'}`}>
+              <span className="font-medium">Img:</span> {dailyUsage.imagens}/100
+            </div>
+            <div className={`flex-1 px-2 py-1 rounded ${dailyUsage.tts > 80 ? 'bg-red-500/20 text-red-400' : dailyUsage.tts > 50 ? 'bg-yellow-500/20 text-yellow-400' : 'bg-green-500/20 text-green-400'}`}>
+              <span className="font-medium">TTS:</span> {dailyUsage.tts}/100
+            </div>
+          </div>
         </div>
 
         {/* Tema */}
@@ -640,12 +694,31 @@ export default function CreatorPanel({ onLog, isPro, draftPath, onReanalyze }: C
               value={qtdImagens}
               onChange={(e) => setQtdImagens(e.target.value)}
               className="w-full bg-background-dark text-white text-xs px-2 py-1 rounded border border-border-light/50 focus:border-orange-500 outline-none"
+              disabled={!gerarImagens}
             >
               {QTD_IMAGENS.map((q) => (
                 <option key={q.id} value={q.id}>{q.name}</option>
               ))}
             </select>
           </div>
+        </div>
+
+        {/* Gerar Imagens Checkbox */}
+        <div className="bg-background-dark-alt/50 rounded-lg p-2.5 border border-border-light/30">
+          <label className="flex items-center gap-2 cursor-pointer">
+            <input
+              type="checkbox"
+              checked={gerarImagens}
+              onChange={(e) => setGerarImagens(e.target.checked)}
+              className="w-4 h-4 accent-orange-500"
+            />
+            <span className="text-xs text-white font-medium">Gerar Imagens</span>
+          </label>
+          <p className="text-[10px] text-text-muted mt-1 ml-6">
+            {gerarImagens
+              ? 'Imagens serao geradas com IA'
+              : 'Apenas roteiro + audio (prompts serao salvos)'}
+          </p>
         </div>
 
         {/* Pasta de Saida */}
@@ -705,7 +778,12 @@ export default function CreatorPanel({ onLog, isPro, draftPath, onReanalyze }: C
             </div>
             <div className="text-[10px] text-green-400/70 space-y-0.5">
               <p>Roteiro: {result.scriptLength} chars</p>
-              <p>Imagens: {result.imagesGenerated} | Audio: {result.audioPartsOk}/{result.audioPartsTotal}</p>
+              {result.imagesSkipped ? (
+                <p>Prompts: {result.promptsSaved} (imagens nao geradas)</p>
+              ) : (
+                <p>Imagens: {result.imagesGenerated}/{result.imagesRequested}</p>
+              )}
+              <p>Audio: {result.audioPartsOk}/{result.audioPartsTotal}</p>
             </div>
 
             {/* Animations toggle */}
