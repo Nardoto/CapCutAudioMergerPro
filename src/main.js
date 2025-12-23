@@ -554,7 +554,15 @@ ipcMain.handle('create-new-project', async () => {
 
     const timestamp = Date.now();
     const microTimestamp = timestamp * 1000 + Math.floor(Math.random() * 1000);
-    const projectName = `SyncPro_${new Date().toISOString().slice(0, 10).replace(/-/g, '')}_${timestamp}`;
+
+    // Encontrar o proximo numero sequencial (001, 002, etc.)
+    const existingFolders = fs.readdirSync(capCutDrafts).filter(f => {
+      const fullPath = path.join(capCutDrafts, f);
+      return fs.statSync(fullPath).isDirectory() && /^\d{3}$/.test(f);
+    });
+    const existingNumbers = existingFolders.map(f => parseInt(f, 10));
+    const nextNumber = existingNumbers.length > 0 ? Math.max(...existingNumbers) + 1 : 1;
+    const projectName = String(nextNumber).padStart(3, '0');
     const projectPath = path.join(capCutDrafts, projectName);
     const draftId = generateUUID();
 
@@ -2895,6 +2903,105 @@ ipcMain.handle('clean-subtitles', async (_, { projectPath }) => {
   } catch (error) {
     console.error('Error cleaning subtitles:', error);
     return { error: error.message };
+  }
+});
+
+// ============ PROJECT EXPORT/IMPORT ============
+// Helper function to run project_manager.py
+function runProjectManager(params) {
+  return new Promise((resolve) => {
+    const basePath = app.isPackaged
+      ? process.resourcesPath
+      : process.cwd();
+    const pythonScript = path.join(basePath, 'python', 'project_manager.py');
+    const tempFile = path.join(app.getPath('temp'), `project_cmd_${Date.now()}.json`);
+
+    fs.writeFileSync(tempFile, JSON.stringify(params));
+
+    const pythonProcess = spawn('python', [pythonScript, '--file', tempFile], {
+      encoding: 'utf-8'
+    });
+
+    let stdout = '';
+    let stderr = '';
+
+    pythonProcess.stdout.on('data', (data) => { stdout += data.toString(); });
+    pythonProcess.stderr.on('data', (data) => { stderr += data.toString(); });
+
+    pythonProcess.on('close', (code) => {
+      try { fs.unlinkSync(tempFile); } catch {}
+
+      if (code === 0 && stdout) {
+        try {
+          resolve(JSON.parse(stdout.trim()));
+        } catch {
+          resolve({ success: false, error: 'Failed to parse response' });
+        }
+      } else {
+        resolve({ success: false, error: stderr || 'Process failed' });
+      }
+    });
+  });
+}
+
+// Export project to ZIP
+ipcMain.handle('export-project', async (_, { draftPath }) => {
+  try {
+    // Open save dialog
+    const { dialog } = require('electron');
+    const projectName = path.basename(path.dirname(draftPath));
+    const result = await dialog.showSaveDialog(mainWindow, {
+      title: 'Exportar Projeto',
+      defaultPath: `${projectName}.zip`,
+      filters: [{ name: 'ZIP Archive', extensions: ['zip'] }]
+    });
+
+    if (result.canceled || !result.filePath) {
+      return { success: false, canceled: true };
+    }
+
+    return runProjectManager({
+      action: 'export',
+      draftPath: path.dirname(draftPath),
+      outputPath: result.filePath
+    });
+  } catch (error) {
+    return { success: false, error: error.message };
+  }
+});
+
+// Import project from ZIP
+ipcMain.handle('import-project', async () => {
+  try {
+    const { dialog } = require('electron');
+
+    // Open file dialog to select ZIP
+    const fileResult = await dialog.showOpenDialog(mainWindow, {
+      title: 'Importar Projeto',
+      filters: [{ name: 'ZIP Archive', extensions: ['zip'] }],
+      properties: ['openFile']
+    });
+
+    if (fileResult.canceled || !fileResult.filePaths.length) {
+      return { success: false, canceled: true };
+    }
+
+    const zipPath = fileResult.filePaths[0];
+
+    // Get CapCut projects folder
+    const capCutDrafts = path.join(app.getPath('appData'), '..', 'Local', 'CapCut', 'User Data', 'Projects', 'com.lveditor.draft');
+
+    if (!fs.existsSync(capCutDrafts)) {
+      return { success: false, error: 'Pasta de projetos do CapCut nao encontrada' };
+    }
+
+    return runProjectManager({
+      action: 'import',
+      zipPath,
+      outputDir: capCutDrafts
+    });
+  } catch (error) {
+    return { success: false, error: error.message };
   }
 });
 

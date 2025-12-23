@@ -1,6 +1,6 @@
 import { useState, useEffect, useRef } from 'react'
 import { motion, AnimatePresence } from 'framer-motion'
-import { Zap, RefreshCw, FileText, HelpCircle, LogOut, FolderOpen, ChevronRight, Minus, Square, X, Download, ExternalLink, User as UserIcon, Crown, Undo2, Search, Clock, ChevronDown, Trash2, Film, Plus, Pencil, Check, Copy, Cloud, Layers, Sparkles, Mic } from 'lucide-react'
+import { Zap, RefreshCw, FileText, HelpCircle, LogOut, FolderOpen, ChevronRight, Minus, Square, X, Download, ExternalLink, User as UserIcon, Crown, Undo2, Search, Clock, ChevronDown, Trash2, Film, Plus, Pencil, Check, Copy, Cloud, Layers, Sparkles, Mic, Upload, FileArchive } from 'lucide-react'
 import type { User, TrackInfo, LogEntry } from '../types'
 import capcutLogo from '../assets/capcut-logo.jpg'
 import nardotoLogoVideo from '../assets/logo-nardoto-animacao.mp4'
@@ -73,6 +73,7 @@ export default function MainLayout({ user, onLogout }: MainLayoutProps) {
   const [importAddAnimations, setImportAddAnimations] = useState(true)
   const [importSyncToAudio, setImportSyncToAudio] = useState(true)
   const [isImporting, setIsImporting] = useState(false)
+  const [isExporting, setIsExporting] = useState(false)
   const [importIsNewProject, setImportIsNewProject] = useState(false)  // Se true, cria projeto antes de importar
   const [logs, setLogs] = useState<LogEntry[]>([
     { id: '1', type: 'info', message: 'CapCut Sync Pro v2.1 iniciado', timestamp: new Date() }
@@ -747,6 +748,56 @@ export default function MainLayout({ user, onLogout }: MainLayoutProps) {
     }
   }
 
+  // Exportar projeto para ZIP
+  const handleExportProject = async () => {
+    if (!ipcRenderer || !draftPath) return
+
+    setIsExporting(true)
+    addLog('info', 'Exportando projeto...')
+
+    try {
+      const result = await ipcRenderer.invoke('export-project', { draftPath })
+
+      if (result.canceled) {
+        addLog('info', 'Exportacao cancelada')
+      } else if (result.success) {
+        addLog('success', `Projeto exportado: ${result.fileSizeMB}MB (${result.mediasCount} midias)`)
+      } else {
+        addLog('error', result.error || 'Erro ao exportar')
+      }
+    } catch (error) {
+      addLog('error', 'Erro: ' + error)
+    } finally {
+      setIsExporting(false)
+    }
+  }
+
+  // Importar projeto de ZIP
+  const handleImportProject = async () => {
+    if (!ipcRenderer) return
+
+    setIsImporting(true)
+    addLog('info', 'Importando projeto...')
+
+    try {
+      const result = await ipcRenderer.invoke('import-project')
+
+      if (result.canceled) {
+        addLog('info', 'Importacao cancelada')
+      } else if (result.success) {
+        addLog('success', `Projeto importado: ${result.projectPath}`)
+        // Reload projects list
+        handleDetectCapCut()
+      } else {
+        addLog('error', result.error || 'Erro ao importar')
+      }
+    } catch (error) {
+      addLog('error', 'Erro: ' + error)
+    } finally {
+      setIsImporting(false)
+    }
+  }
+
   // Toggle seleção de projeto para delete múltiplo
   const toggleProjectSelection = (projectPath: string) => {
     setSelectedProjectsForDelete(prev => {
@@ -1000,8 +1051,119 @@ export default function MainLayout({ user, onLogout }: MainLayoutProps) {
       </div>
 
       <div className="flex-1 flex flex-col overflow-hidden min-h-0">
+        {/* Botões de Projeto - Acima das Abas */}
+        <div className="flex-shrink-0 bg-background-dark-alt px-2 pt-2 pb-1 flex items-center gap-2">
+          <button
+            onClick={handleDetectCapCut}
+            disabled={isLoading}
+            className="py-1.5 px-3 flex items-center gap-1.5 text-xs font-medium rounded-lg transition-all bg-gradient-to-r from-primary to-primary/80 text-white hover:brightness-110 disabled:opacity-50"
+            title="Abrir projeto do CapCut"
+          >
+            <Search className="w-3.5 h-3.5" />
+            {isLoading ? 'Analisando...' : 'Abrir Projeto'}
+          </button>
+          <button
+            onClick={handleSelectFolder}
+            disabled={isLoading}
+            className="py-1.5 px-3 flex items-center gap-1.5 text-xs font-medium rounded-lg transition-all bg-white/10 text-text-secondary hover:bg-white/20 disabled:opacity-50"
+            title="Selecionar pasta manualmente"
+          >
+            <FolderOpen className="w-3.5 h-3.5" />
+            Manual
+          </button>
+          {draftPath && (
+            <button
+              onClick={handleExportProject}
+              disabled={isExporting}
+              className="py-1.5 px-3 flex items-center gap-1.5 text-xs font-medium rounded-lg transition-all bg-orange-500/20 text-orange-400 hover:bg-orange-500/30 disabled:opacity-50"
+              title="Exportar projeto para ZIP"
+            >
+              <Upload className="w-3.5 h-3.5" />
+              {isExporting ? 'Exportando...' : 'Exportar'}
+            </button>
+          )}
+          {/* Novo button with dropdown */}
+          <div ref={newDropdownRef} className="relative">
+            <button
+              onClick={() => setShowNewDropdown(!showNewDropdown)}
+              disabled={isLoading}
+              className="py-1.5 px-3 flex items-center gap-1.5 text-xs font-medium rounded-lg transition-all bg-white/10 text-text-secondary hover:bg-white/20 disabled:opacity-50"
+              title="Criar novo projeto"
+            >
+              <Plus className="w-3.5 h-3.5" />
+              Novo
+              <ChevronDown className={`w-3 h-3 transition-transform ${showNewDropdown ? 'rotate-180' : ''}`} />
+            </button>
+
+            {/* Dropdown */}
+            <AnimatePresence>
+              {showNewDropdown && (
+                <motion.div
+                  initial={{ opacity: 0, y: -5 }}
+                  animate={{ opacity: 1, y: 0 }}
+                  exit={{ opacity: 0, y: -5 }}
+                  className="absolute left-0 top-full mt-1 w-48 bg-[#141414] border border-border-light rounded-lg shadow-xl z-50 overflow-hidden"
+                >
+                  <button
+                    onClick={() => { setShowNewDropdown(false); handleNewProject(); }}
+                    className="w-full p-3 flex items-center gap-3 hover:bg-white/10 transition-colors text-left"
+                  >
+                    <div className="w-8 h-8 rounded-lg bg-gradient-to-br from-primary/30 to-primary/10 flex items-center justify-center">
+                      <Plus className="w-4 h-4 text-primary" />
+                    </div>
+                    <div>
+                      <span className="text-xs text-white font-medium block">Novo do zero</span>
+                      <span className="text-[10px] text-text-muted">Projeto vazio</span>
+                    </div>
+                  </button>
+                  <button
+                    onClick={() => { setShowNewDropdown(false); handleOpenTemplatePicker(); }}
+                    className="w-full p-3 flex items-center gap-3 hover:bg-white/10 transition-colors text-left border-t border-border-light"
+                  >
+                    <div className="w-8 h-8 rounded-lg bg-gradient-to-br from-primary/30 to-primary/10 flex items-center justify-center">
+                      <Copy className="w-4 h-4 text-primary" />
+                    </div>
+                    <div>
+                      <span className="text-xs text-white font-medium block">A partir de template</span>
+                      <span className="text-[10px] text-text-muted">Usa projeto existente</span>
+                    </div>
+                  </button>
+                  <button
+                    onClick={() => { setShowNewDropdown(false); handleNewProjectFromMedia(); }}
+                    disabled={isImporting}
+                    className="w-full p-3 flex items-center gap-3 hover:bg-white/10 transition-colors text-left border-t border-border-light disabled:opacity-50 disabled:cursor-not-allowed"
+                    title="Criar projeto com mídias de uma pasta"
+                  >
+                    <div className="w-8 h-8 rounded-lg bg-gradient-to-br from-primary/30 to-primary/10 flex items-center justify-center">
+                      <Download className="w-4 h-4 text-primary" />
+                    </div>
+                    <div>
+                      <span className="text-xs text-white font-medium block">Projeto com Mídias</span>
+                      <span className="text-[10px] text-text-muted">Cria projeto e importa pasta</span>
+                    </div>
+                  </button>
+                  <button
+                    onClick={() => { setShowNewDropdown(false); handleImportProject(); }}
+                    disabled={isImporting}
+                    className="w-full p-3 flex items-center gap-3 hover:bg-white/10 transition-colors text-left border-t border-border-light disabled:opacity-50 disabled:cursor-not-allowed"
+                    title="Importar projeto de arquivo ZIP"
+                  >
+                    <div className="w-8 h-8 rounded-lg bg-gradient-to-br from-orange-500/30 to-orange-500/10 flex items-center justify-center">
+                      <FileArchive className="w-4 h-4 text-orange-400" />
+                    </div>
+                    <div>
+                      <span className="text-xs text-white font-medium block">Importar de ZIP</span>
+                      <span className="text-[10px] text-text-muted">Abre projeto exportado</span>
+                    </div>
+                  </button>
+                </motion.div>
+              )}
+            </AnimatePresence>
+          </div>
+        </div>
+
         {/* Tabs - Estilo Fichário */}
-        <div className="flex-shrink-0 bg-background-dark-alt px-2 pt-2 flex items-end gap-0 border-b border-border-light">
+        <div className="flex-shrink-0 bg-background-dark-alt px-2 pt-1 flex items-end gap-0 border-b border-border-light">
           {tabs.map((tab) => {
             const isActive = activeTab === tab.id
             return (
@@ -1022,7 +1184,10 @@ export default function MainLayout({ user, onLogout }: MainLayoutProps) {
                   className="w-3.5 h-3.5"
                   style={{ color: isActive ? tab.hexColor : '#A3A3A3' }}
                 />
-                <span className={`text-[10px] font-semibold ${isActive ? 'text-white' : ''}`}>
+                <span
+                  className="text-[10px] font-semibold"
+                  style={{ color: isActive ? tab.hexColor : '' }}
+                >
                   {tab.label}
                 </span>
               </button>
@@ -1052,94 +1217,10 @@ export default function MainLayout({ user, onLogout }: MainLayoutProps) {
 
         {/* Main Content */}
         <div className="flex-1 flex flex-col overflow-hidden min-h-0 bg-background-dark">
-          {/* Project selector */}
+          {/* Project info bar - só aparece quando tem projeto aberto */}
+          {projectPath && (
           <div className="p-2 border-b border-border-light flex-shrink-0">
             <div className="flex items-center gap-2">
-              <button
-                onClick={handleDetectCapCut}
-                disabled={isLoading}
-                className="py-1.5 px-3 flex items-center gap-1.5 text-xs font-medium rounded-lg transition-all bg-gradient-to-r from-primary to-primary/80 text-white hover:brightness-110 disabled:opacity-50"
-                title="Abrir projeto do CapCut"
-              >
-                <Search className="w-3.5 h-3.5" />
-                {isLoading ? 'Analisando...' : 'Abrir Projeto'}
-              </button>
-              <button
-                onClick={handleSelectFolder}
-                disabled={isLoading}
-                className="py-1.5 px-3 flex items-center gap-1.5 text-xs font-medium rounded-lg transition-all bg-white/10 text-text-secondary hover:bg-white/20 disabled:opacity-50"
-                title="Selecionar pasta manualmente"
-              >
-                <FolderOpen className="w-3.5 h-3.5" />
-                Manual
-              </button>
-              {/* Novo button with dropdown */}
-              <div ref={newDropdownRef} className="relative">
-                <button
-                  onClick={() => setShowNewDropdown(!showNewDropdown)}
-                  disabled={isLoading}
-                  className="py-1.5 px-3 flex items-center gap-1.5 text-xs font-medium rounded-lg transition-all bg-white/10 text-text-secondary hover:bg-white/20 disabled:opacity-50"
-                  title="Criar novo projeto"
-                >
-                  <Plus className="w-3.5 h-3.5" />
-                  Novo
-                  <ChevronDown className={`w-3 h-3 transition-transform ${showNewDropdown ? 'rotate-180' : ''}`} />
-                </button>
-
-                {/* Dropdown */}
-                <AnimatePresence>
-                  {showNewDropdown && (
-                    <motion.div
-                      initial={{ opacity: 0, y: -5 }}
-                      animate={{ opacity: 1, y: 0 }}
-                      exit={{ opacity: 0, y: -5 }}
-                      className="absolute left-0 top-full mt-1 w-48 bg-[#141414] border border-border-light rounded-lg shadow-xl z-50 overflow-hidden"
-                    >
-                      <button
-                        onClick={() => { setShowNewDropdown(false); handleNewProject(); }}
-                        className="w-full p-3 flex items-center gap-3 hover:bg-white/10 transition-colors text-left"
-                      >
-                        <div className="w-8 h-8 rounded-lg bg-gradient-to-br from-primary/30 to-primary/10 flex items-center justify-center">
-                          <Plus className="w-4 h-4 text-primary" />
-                        </div>
-                        <div>
-                          <span className="text-xs text-white font-medium block">Novo do zero</span>
-                          <span className="text-[10px] text-text-muted">Projeto vazio</span>
-                        </div>
-                      </button>
-                      <button
-                        onClick={() => { setShowNewDropdown(false); handleOpenTemplatePicker(); }}
-                        className="w-full p-3 flex items-center gap-3 hover:bg-white/10 transition-colors text-left border-t border-border-light"
-                      >
-                        <div className="w-8 h-8 rounded-lg bg-gradient-to-br from-primary/30 to-primary/10 flex items-center justify-center">
-                          <Copy className="w-4 h-4 text-primary" />
-                        </div>
-                        <div>
-                          <span className="text-xs text-white font-medium block">A partir de template</span>
-                          <span className="text-[10px] text-text-muted">Usa projeto existente</span>
-                        </div>
-                      </button>
-                      <button
-                        onClick={() => { setShowNewDropdown(false); handleNewProjectFromMedia(); }}
-                        disabled={isImporting}
-                        className="w-full p-3 flex items-center gap-3 hover:bg-white/10 transition-colors text-left border-t border-border-light disabled:opacity-50 disabled:cursor-not-allowed"
-                        title="Criar projeto com mídias de uma pasta"
-                      >
-                        <div className="w-8 h-8 rounded-lg bg-gradient-to-br from-primary/30 to-primary/10 flex items-center justify-center">
-                          <Download className="w-4 h-4 text-primary" />
-                        </div>
-                        <div>
-                          <span className="text-xs text-white font-medium block">Projeto com Mídias</span>
-                          <span className="text-[10px] text-text-muted">Cria projeto e importa pasta</span>
-                        </div>
-                      </button>
-                    </motion.div>
-                  )}
-                </AnimatePresence>
-              </div>
-
-              {projectPath && (
-                <>
                   <div className="flex items-center gap-1 text-xs">
                     <ChevronRight className="w-3.5 h-3.5 text-text-muted" />
                     {isEditingName ? (
@@ -1227,8 +1308,6 @@ export default function MainLayout({ user, onLogout }: MainLayoutProps) {
                     )}
                     Analisar
                   </button>
-                </>
-              )}
 
               {/* Undo/Redo buttons */}
               <div ref={backupDropdownRef} className="ml-auto flex items-center gap-1 relative">
@@ -1322,6 +1401,7 @@ export default function MainLayout({ user, onLogout }: MainLayoutProps) {
               </div>
             </div>
           </div>
+          )}
 
           {/* Content area */}
           <div className="flex-1 flex overflow-hidden min-h-0">
