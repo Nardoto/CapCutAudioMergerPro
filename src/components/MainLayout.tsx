@@ -4,6 +4,7 @@ import { Zap, RefreshCw, FileText, HelpCircle, LogOut, FolderOpen, ChevronRight,
 import type { User, TrackInfo, LogEntry } from '../types'
 import capcutLogo from '../assets/capcut-logo.jpg'
 import nardotoLogoVideo from '../assets/logo-nardoto-animacao.mp4'
+import capcutWarningVideo from '../assets/capcut-warning.mp4'
 import TimelinePreview from './TimelinePreview'
 import SyncPanel from './panels/SyncPanel'
 import LoopPanel from './panels/LoopPanel'
@@ -74,6 +75,31 @@ export default function MainLayout({ user, onLogout }: MainLayoutProps) {
   const [importSyncToAudio, setImportSyncToAudio] = useState(true)
   const [isImporting, setIsImporting] = useState(false)
   const [isExporting, setIsExporting] = useState(false)
+  const [photoError, setPhotoError] = useState(false)
+  const [isCapCutOpen, setIsCapCutOpen] = useState(false)
+  // Reset photo error quando URL mudar
+  useEffect(() => { setPhotoError(false) }, [user.photoURL])
+
+  // Check if CapCut is running every 5 seconds
+  useEffect(() => {
+    const checkCapCut = async () => {
+      if (!ipcRenderer) return
+      try {
+        const result = await ipcRenderer.invoke('check-capcut-running')
+        setIsCapCutOpen(result.isRunning)
+      } catch {
+        setIsCapCutOpen(false)
+      }
+    }
+
+    // Check immediately
+    checkCapCut()
+
+    // Then check every 5 seconds
+    const interval = setInterval(checkCapCut, 5000)
+
+    return () => clearInterval(interval)
+  }, [])
   const [importIsNewProject, setImportIsNewProject] = useState(false)  // Se true, cria projeto antes de importar
   const [logs, setLogs] = useState<LogEntry[]>([
     { id: '1', type: 'info', message: 'CapCut Sync Pro v2.1 iniciado', timestamp: new Date() }
@@ -188,6 +214,81 @@ export default function MainLayout({ user, onLogout }: MainLayoutProps) {
     }
     return () => document.removeEventListener('mousedown', handleClickOutside)
   }, [showNewDropdown])
+
+  // Atalhos de teclado F1-F11 e ESC
+  useEffect(() => {
+    const handleKeyDown = (e: KeyboardEvent) => {
+      // ESC fecha modais/dropdowns (funciona mesmo em inputs)
+      if (e.key === 'Escape') {
+        e.preventDefault()
+        if (showDeleteConfirm) { setShowDeleteConfirm(false); return }
+        if (showTrackDeleteConfirm) { setShowTrackDeleteConfirm(false); return }
+        if (showMultiDeleteConfirm) { setShowMultiDeleteConfirm(false); return }
+        if (showTypeDeleteConfirm) { setShowTypeDeleteConfirm(false); return }
+        if (showImportPreview) { setShowImportPreview(false); return }
+        if (showTrackManager) { setShowTrackManager(false); return }
+        if (showTemplatePicker) { setShowTemplatePicker(false); return }
+        if (showProjectPicker) { setShowProjectPicker(false); return }
+        if (showNewDropdown) { setShowNewDropdown(false); return }
+        if (showBackupDropdown) { setShowBackupDropdown(false); return }
+        if (showHelp) { setShowHelp(false); return }
+        return
+      }
+
+      // Ignorar outros atalhos se estiver em input/textarea
+      if (e.target instanceof HTMLInputElement || e.target instanceof HTMLTextAreaElement) return
+
+      switch (e.key) {
+        case 'F1':
+          e.preventDefault()
+          setShowHelp(true)
+          break
+        case 'F2':
+          e.preventDefault()
+          handleDetectCapCut()
+          break
+        case 'F3':
+          e.preventDefault()
+          handleSelectFolder()
+          break
+        case 'F4':
+          e.preventDefault()
+          if (draftPath) handleExportProject()
+          break
+        case 'F5':
+          e.preventDefault()
+          setShowNewDropdown(prev => !prev)
+          break
+        case 'F6':
+          e.preventDefault()
+          setActiveTab('creator')
+          break
+        case 'F7':
+          e.preventDefault()
+          setActiveTab('sync')
+          break
+        case 'F8':
+          e.preventDefault()
+          setActiveTab('loop')
+          break
+        case 'F9':
+          e.preventDefault()
+          setActiveTab('srt')
+          break
+        case 'F10':
+          e.preventDefault()
+          setActiveTab('media')
+          break
+        case 'F11':
+          e.preventDefault()
+          setActiveTab('merge')
+          break
+      }
+    }
+
+    window.addEventListener('keydown', handleKeyDown)
+    return () => window.removeEventListener('keydown', handleKeyDown)
+  }, [draftPath, showHelp, showProjectPicker, showBackupDropdown, showTemplatePicker, showTrackManager, showDeleteConfirm, showTrackDeleteConfirm, showNewDropdown, showMultiDeleteConfirm, showTypeDeleteConfirm, showImportPreview])
 
   const addLog = (type: LogEntry['type'], message: string) => {
     setLogCounter(c => c + 1)
@@ -998,8 +1099,13 @@ export default function MainLayout({ user, onLogout }: MainLayoutProps) {
         <div className="flex items-center gap-2 no-drag">
           {/* User name and plan */}
           <div className="flex items-center gap-2 mr-2 px-2 py-1 bg-white/5 rounded-lg">
-            {user.photoURL ? (
-              <img src={user.photoURL} alt="" className="w-5 h-5 rounded-full" />
+            {user.photoURL && !photoError ? (
+              <img
+                src={user.photoURL}
+                alt=""
+                className="w-5 h-5 rounded-full"
+                onError={() => setPhotoError(true)}
+              />
             ) : (
               <UserIcon className="w-4 h-4 text-text-muted" />
             )}
@@ -1051,47 +1157,53 @@ export default function MainLayout({ user, onLogout }: MainLayoutProps) {
       </div>
 
       <div className="flex-1 flex flex-col overflow-hidden min-h-0">
-        {/* Botões de Projeto - Acima das Abas */}
-        <div className="flex-shrink-0 bg-background-dark-alt px-2 pt-2 pb-1 flex items-center gap-2">
+        {/* Botões de Projeto + Tabs na mesma linha */}
+        <div className="flex-shrink-0 bg-background-dark-alt px-2 py-1 pb-0 flex items-end gap-2 relative">
+          {/* Linha horizontal de fundo - a aba ativa vai cobrir essa linha */}
+          <div className="absolute bottom-0 left-0 right-0 h-px bg-border-light" style={{ zIndex: 0 }} />
           <button
             onClick={handleDetectCapCut}
             disabled={isLoading}
-            className="py-1.5 px-3 flex items-center gap-1.5 text-xs font-medium rounded-lg transition-all bg-gradient-to-r from-primary to-primary/80 text-white hover:brightness-110 disabled:opacity-50"
-            title="Abrir projeto do CapCut"
+            className="py-1.5 px-3 mb-1 flex items-center gap-1.5 text-xs font-medium rounded-lg transition-all bg-gradient-to-r from-primary to-primary/80 text-white hover:brightness-110 disabled:opacity-50"
+            title="Abrir projeto do CapCut (F2)"
           >
             <Search className="w-3.5 h-3.5" />
             {isLoading ? 'Analisando...' : 'Abrir Projeto'}
+            <span className="text-[8px] opacity-60 ml-0.5">F2</span>
           </button>
           <button
             onClick={handleSelectFolder}
             disabled={isLoading}
-            className="py-1.5 px-3 flex items-center gap-1.5 text-xs font-medium rounded-lg transition-all bg-white/10 text-text-secondary hover:bg-white/20 disabled:opacity-50"
-            title="Selecionar pasta manualmente"
+            className="py-1.5 px-3 mb-1 flex items-center gap-1.5 text-xs font-medium rounded-lg transition-all bg-white/10 text-text-secondary hover:bg-white/20 disabled:opacity-50"
+            title="Selecionar pasta manualmente (F3)"
           >
             <FolderOpen className="w-3.5 h-3.5" />
             Manual
+            <span className="text-[8px] text-text-muted/50 ml-0.5">F3</span>
           </button>
           {draftPath && (
             <button
               onClick={handleExportProject}
               disabled={isExporting}
-              className="py-1.5 px-3 flex items-center gap-1.5 text-xs font-medium rounded-lg transition-all bg-orange-500/20 text-orange-400 hover:bg-orange-500/30 disabled:opacity-50"
-              title="Exportar projeto para ZIP"
+              className="py-1.5 px-3 mb-1 flex items-center gap-1.5 text-xs font-medium rounded-lg transition-all bg-orange-500/20 text-orange-400 hover:bg-orange-500/30 disabled:opacity-50"
+              title="Exportar projeto para ZIP (F4)"
             >
               <Upload className="w-3.5 h-3.5" />
               {isExporting ? 'Exportando...' : 'Exportar'}
+              <span className="text-[8px] opacity-60 ml-0.5">F4</span>
             </button>
           )}
           {/* Novo button with dropdown */}
-          <div ref={newDropdownRef} className="relative">
+          <div ref={newDropdownRef} className="relative mb-1">
             <button
               onClick={() => setShowNewDropdown(!showNewDropdown)}
               disabled={isLoading}
               className="py-1.5 px-3 flex items-center gap-1.5 text-xs font-medium rounded-lg transition-all bg-white/10 text-text-secondary hover:bg-white/20 disabled:opacity-50"
-              title="Criar novo projeto"
+              title="Criar novo projeto (F5)"
             >
               <Plus className="w-3.5 h-3.5" />
               Novo
+              <span className="text-[8px] text-text-muted/50 ml-0.5">F5</span>
               <ChevronDown className={`w-3 h-3 transition-transform ${showNewDropdown ? 'rotate-180' : ''}`} />
             </button>
 
@@ -1160,49 +1272,59 @@ export default function MainLayout({ user, onLogout }: MainLayoutProps) {
               )}
             </AnimatePresence>
           </div>
-        </div>
 
-        {/* Tabs - Estilo Fichário */}
-        <div className="flex-shrink-0 bg-background-dark-alt px-2 pt-1 flex items-end gap-0 border-b border-border-light">
-          {tabs.map((tab) => {
-            const isActive = activeTab === tab.id
-            return (
-              <button
-                key={tab.id}
-                onClick={() => setActiveTab(tab.id)}
-                className={`relative px-4 py-2 flex items-center gap-1.5 transition-all duration-200 rounded-t-lg ${
-                  isActive
-                    ? 'bg-background-dark border-t border-l border-r border-border-light text-white -mb-px z-10'
-                    : 'bg-background-dark-alt/50 text-text-muted hover:text-text-secondary hover:bg-white/5 border border-transparent mb-0'
-                }`}
-                style={isActive ? {
-                  borderTopColor: tab.hexColor,
-                  borderTopWidth: '2px'
-                } : {}}
-              >
-                <tab.icon
-                  className="w-3.5 h-3.5"
-                  style={{ color: isActive ? tab.hexColor : '#A3A3A3' }}
-                />
-                <span
-                  className="text-[10px] font-semibold"
-                  style={{ color: isActive ? tab.hexColor : '' }}
+          {/* Separador visual */}
+          <div className="w-px h-6 bg-border-light mx-1" />
+
+          {/* Tabs estilo Chrome/Fichário */}
+          <div className="flex items-end relative">
+            {tabs.map((tab, index) => {
+              const isActive = activeTab === tab.id
+              const fKey = index + 6 // F6, F7, F8...
+              return (
+                <button
+                  key={tab.id}
+                  onClick={() => setActiveTab(tab.id)}
+                  className={`relative px-3 py-1.5 flex items-center gap-1.5 rounded-t-lg ${
+                    isActive
+                      ? 'text-white'
+                      : 'text-text-muted hover:text-text-secondary hover:bg-white/5 mb-px'
+                  }`}
+                  style={isActive ? {
+                    backgroundColor: '#0A0A0A',
+                    border: '1px solid #3A3A3A',
+                    borderBottomColor: '#0A0A0A',
+                    zIndex: 5,
+                    marginBottom: '-1px'
+                  } : undefined}
                 >
-                  {tab.label}
-                </span>
-              </button>
-            )
-          })}
+                  <tab.icon
+                    className="w-3.5 h-3.5"
+                    style={{ color: isActive ? tab.hexColor : '#A3A3A3' }}
+                  />
+                  <span
+                    className="text-[10px] font-semibold"
+                    style={{ color: isActive ? tab.hexColor : '' }}
+                  >
+                    {tab.label}
+                  </span>
+                  <span className="text-[8px] text-text-muted/50 ml-0.5">F{fKey}</span>
+                </button>
+              )
+            })}
+          </div>
 
+          {/* Spacer para empurrar Help para direita */}
           <div className="flex-1" />
 
           {/* Help & Credits */}
-          <div className="flex items-center gap-1 mb-1">
+          <div className="flex items-center gap-1">
             <button
               onClick={() => setShowHelp(true)}
-              className="p-1.5 rounded hover:bg-primary/20 transition-colors"
-              title="Ajuda"
+              className="p-1.5 rounded hover:bg-primary/20 transition-colors flex items-center gap-1"
+              title="Ajuda (F1)"
             >
+              <span className="text-[8px] text-text-muted/50">F1</span>
               <HelpCircle className="w-3.5 h-3.5 text-primary" />
             </button>
             <button
@@ -1219,7 +1341,7 @@ export default function MainLayout({ user, onLogout }: MainLayoutProps) {
         <div className="flex-1 flex flex-col overflow-hidden min-h-0 bg-background-dark">
           {/* Project info bar - só aparece quando tem projeto aberto */}
           {projectPath && (
-          <div className="p-2 border-b border-border-light flex-shrink-0">
+          <div className="p-2 flex-shrink-0">
             <div className="flex items-center gap-2">
                   <div className="flex items-center gap-1 text-xs">
                     <ChevronRight className="w-3.5 h-3.5 text-text-muted" />
@@ -1532,12 +1654,17 @@ export default function MainLayout({ user, onLogout }: MainLayoutProps) {
             </div>
 
             {/* Projects Panel */}
-            <div className="w-72 border-l border-border-light flex-shrink-0 flex flex-col bg-gradient-to-b from-background-dark to-background-dark-alt">
-              {/* Video Nardoto Logo */}
-              <div className="p-3 border-b border-border-light">
-                <div className="rounded-lg overflow-hidden border border-primary/30 bg-black">
+            <div className="w-72 flex-shrink-0 flex flex-col bg-gradient-to-b from-background-dark to-background-dark-alt">
+              {/* Video Nardoto Logo / CapCut Warning */}
+              <div className="p-3">
+                <div className={`rounded-lg overflow-hidden bg-black transition-all duration-300 ${
+                  isCapCutOpen
+                    ? 'border-2 border-red-500 shadow-lg shadow-red-500/30'
+                    : 'border border-primary/30'
+                }`}>
                   <video
-                    src={nardotoLogoVideo}
+                    key={isCapCutOpen ? 'warning' : 'logo'}
+                    src={isCapCutOpen ? capcutWarningVideo : nardotoLogoVideo}
                     autoPlay
                     loop
                     muted
@@ -1550,7 +1677,7 @@ export default function MainLayout({ user, onLogout }: MainLayoutProps) {
               {/* Lista de projetos */}
               <div className="flex-1 overflow-hidden flex flex-col">
                 {/* Toggle Local / Nuvem */}
-                <div className="p-2 border-b border-border-light">
+                <div className="p-2">
                   <div className="flex rounded-lg bg-white/5 p-0.5">
                     <button
                       onClick={() => {
@@ -1586,7 +1713,7 @@ export default function MainLayout({ user, onLogout }: MainLayoutProps) {
                 </div>
 
                 {/* Header com botão de atualizar */}
-                <div className="p-2 border-b border-border-light flex items-center justify-between">
+                <div className="p-2 flex items-center justify-between">
                   {projectSource === 'local' ? (
                     <>
                       <div className="flex items-center gap-2">
@@ -1831,7 +1958,7 @@ export default function MainLayout({ user, onLogout }: MainLayoutProps) {
       </div>
 
       {/* Footer */}
-      <div className="h-5 bg-gradient-to-r from-background-dark-alt to-background-dark border-t border-border-light flex items-center justify-center px-3 flex-shrink-0">
+      <div className="h-5 bg-gradient-to-r from-background-dark-alt to-background-dark flex items-center justify-center px-3 flex-shrink-0">
         <span className="text-[9px] text-text-muted">
           Desenvolvido por <button onClick={() => ipcRenderer?.invoke('open-external', 'https://nardoto.com.br')} className="text-primary hover:underline">Nardoto</button>
         </span>

@@ -201,15 +201,181 @@ def export_project(params):
         return {"success": False, "error": str(e)}
 
 
+def generate_draft_id():
+    """Gera um ID unico no formato do CapCut"""
+    return uuid.uuid4().hex.upper()[:24]
+
+
+def get_micro_timestamp():
+    """Retorna timestamp em microsegundos"""
+    return int(datetime.now().timestamp() * 1000000)
+
+
+def create_draft_info(project_dir, draft_id, project_name):
+    """Cria o arquivo draft_info.json"""
+    draft_info = {
+        "draft_cloud_last_action_download": False,
+        "draft_cloud_materials": [],
+        "draft_cloud_purchase_info": "",
+        "draft_cloud_template_id": "",
+        "draft_cloud_tutorial_info": "",
+        "draft_cloud_videocut_purchase_info": "",
+        "draft_fold_path": project_dir.replace("\\", "/"),
+        "draft_id": draft_id,
+        "draft_is_ai_shorts": False,
+        "draft_is_invisible": False,
+        "draft_materials": [],
+        "draft_materials_copied_info": [],
+        "draft_name": project_name,
+        "draft_new_version": "",
+        "draft_timeline_materials_size": 0,
+        "tm_draft_create": get_micro_timestamp(),
+        "tm_draft_modified": get_micro_timestamp()
+    }
+
+    draft_info_path = os.path.join(project_dir, "draft_info.json")
+    with open(draft_info_path, 'w', encoding='utf-8') as f:
+        json.dump(draft_info, f, ensure_ascii=False, indent=2)
+
+    return draft_info
+
+
+def create_draft_meta_info(project_dir, draft_id, project_name, root_path):
+    """Cria o arquivo draft_meta_info.json"""
+    micro_ts = get_micro_timestamp()
+
+    draft_meta_info = {
+        "cloud_draft_cover": True,
+        "cloud_draft_sync": True,
+        "draft_cloud_last_action_download": False,
+        "draft_cloud_purchase_info": "",
+        "draft_cloud_template_id": "",
+        "draft_cloud_tutorial_info": "",
+        "draft_cloud_videocut_purchase_info": "",
+        "draft_cover": "",
+        "draft_enterprise_info": {
+            "draft_enterprise_extra": "",
+            "draft_enterprise_id": "",
+            "draft_enterprise_name": "",
+            "enterprise_material": []
+        },
+        "draft_fold_path": project_dir.replace("\\", "/"),
+        "draft_id": draft_id,
+        "draft_is_ai_shorts": False,
+        "draft_is_article_video_draft": False,
+        "draft_is_cloud_temp_draft": False,
+        "draft_is_from_deeplink": "false",
+        "draft_is_invisible": False,
+        "draft_is_web_article_video": False,
+        "draft_materials": [
+            {"type": 0, "value": []},
+            {"type": 1, "value": []},
+            {"type": 2, "value": []},
+            {"type": 3, "value": []},
+            {"type": 6, "value": []},
+            {"type": 7, "value": []},
+            {"type": 8, "value": []}
+        ],
+        "draft_materials_copied_info": [],
+        "draft_name": project_name,
+        "draft_need_rename_folder": False,
+        "draft_new_version": "",
+        "draft_removable_storage_device": "",
+        "draft_root_path": root_path.replace("\\", "/"),
+        "draft_segment_extra_info": [],
+        "streaming_edit_draft_ready": True,
+        "tm_draft_create": micro_ts,
+        "tm_draft_modified": micro_ts,
+        "tm_draft_removed": 0,
+        "tm_duration": 0
+    }
+
+    meta_path = os.path.join(project_dir, "draft_meta_info.json")
+    with open(meta_path, 'w', encoding='utf-8') as f:
+        json.dump(draft_meta_info, f, ensure_ascii=False)
+
+    return draft_meta_info
+
+
+def register_in_root_meta(root_meta_path, project_dir, draft_id, project_name, root_path):
+    """Registra o projeto no root_meta_info.json"""
+    micro_ts = get_micro_timestamp()
+
+    # Ler ou criar root_meta_info
+    root_meta = {
+        "all_draft_store": [],
+        "draft_ids": 0,
+        "root_path": root_path.replace("\\", "/")
+    }
+
+    if os.path.exists(root_meta_path):
+        try:
+            with open(root_meta_path, 'r', encoding='utf-8') as f:
+                root_meta = json.load(f)
+        except:
+            pass
+
+    # Criar entrada para o novo projeto
+    new_entry = {
+        "cloud_draft_cover": True,
+        "cloud_draft_sync": True,
+        "draft_cloud_last_action_download": False,
+        "draft_cloud_purchase_info": "",
+        "draft_cloud_template_id": "",
+        "draft_cloud_tutorial_info": "",
+        "draft_cloud_videocut_purchase_info": "",
+        "draft_cover": "",
+        "draft_fold_path": project_dir.replace("\\", "/"),
+        "draft_id": draft_id,
+        "draft_is_ai_shorts": False,
+        "draft_is_cloud_temp_draft": False,
+        "draft_is_invisible": False,
+        "draft_is_web_article_video": False,
+        "draft_json_file": os.path.join(project_dir, "draft_content.json").replace("\\", "/"),
+        "draft_name": project_name,
+        "draft_new_version": "",
+        "draft_root_path": root_path.replace("\\", "/"),
+        "draft_timeline_materials_size": 0,
+        "draft_type": "",
+        "draft_web_article_video_enter_from": "",
+        "streaming_edit_draft_ready": True,
+        "tm_draft_cloud_completed": "",
+        "tm_draft_cloud_entry_id": -1,
+        "tm_draft_cloud_modified": 0,
+        "tm_draft_cloud_parent_entry_id": -1,
+        "tm_draft_cloud_space_id": -1,
+        "tm_draft_cloud_user_id": -1,
+        "tm_draft_create": micro_ts,
+        "tm_draft_modified": micro_ts,
+        "tm_draft_removed": 0,
+        "tm_duration": 0
+    }
+
+    # Adicionar ao inicio da lista
+    if "all_draft_store" not in root_meta:
+        root_meta["all_draft_store"] = []
+
+    root_meta["all_draft_store"].insert(0, new_entry)
+
+    # Salvar
+    with open(root_meta_path, 'w', encoding='utf-8') as f:
+        json.dump(root_meta, f, ensure_ascii=False)
+
+    return new_entry
+
+
 def import_project(params):
     """
     Importa um projeto de um arquivo ZIP
     - Descompacta o arquivo
     - Atualiza os caminhos das midias para caminhos absolutos
+    - Cria draft_info.json e draft_meta_info.json
+    - Registra no root_meta_info.json
     - Retorna o caminho do projeto importado
     """
     zip_path = params.get("zipPath")
-    output_dir = params.get("outputDir")  # Pasta onde extrair o projeto
+    output_dir = params.get("outputDir")  # Pasta onde extrair o projeto (capcut drafts)
+    root_meta_path = params.get("rootMetaPath")  # Caminho do root_meta_info.json
 
     if not zip_path or not os.path.exists(zip_path):
         return {"success": False, "error": "Arquivo ZIP nao encontrado"}
@@ -223,6 +389,10 @@ def import_project(params):
 
         # Nome da pasta do projeto (baseado no nome do ZIP)
         zip_name = os.path.splitext(os.path.basename(zip_path))[0]
+        # Remover sufixo _export se existir
+        if zip_name.endswith("_export"):
+            zip_name = zip_name[:-7]
+
         project_dir = os.path.join(output_dir, zip_name)
 
         # Se ja existir, adicionar sufixo
@@ -233,6 +403,7 @@ def import_project(params):
             counter += 1
 
         os.makedirs(project_dir, exist_ok=True)
+        project_name = os.path.basename(project_dir)
 
         # Extrair ZIP
         with zipfile.ZipFile(zip_path, 'r') as zipf:
@@ -246,12 +417,19 @@ def import_project(params):
         with open(draft_content_path, 'r', encoding='utf-8') as f:
             draft_content = json.load(f)
 
+        # Gerar novo ID para o projeto importado
+        new_draft_id = generate_draft_id()
+
+        # Atualizar ID no draft_content
+        draft_content["id"] = new_draft_id
+        draft_content["name"] = project_name
+
         # Atualizar caminhos relativos para absolutos
         materials = draft_content.get("materials", {})
 
         def update_path_to_absolute(relative_path):
             if relative_path.startswith("medias/") or relative_path.startswith("medias\\"):
-                return os.path.join(project_dir, relative_path)
+                return os.path.join(project_dir, relative_path).replace("\\", "/")
             return relative_path
 
         # Atualizar videos
@@ -276,7 +454,17 @@ def import_project(params):
         with open(draft_content_path, 'w', encoding='utf-8') as f:
             json.dump(draft_content, f, ensure_ascii=False, indent=2)
 
-        # Ler metadados se existirem
+        # Criar draft_info.json
+        create_draft_info(project_dir, new_draft_id, project_name)
+
+        # Criar draft_meta_info.json
+        create_draft_meta_info(project_dir, new_draft_id, project_name, output_dir)
+
+        # Registrar no root_meta_info.json
+        if root_meta_path:
+            register_in_root_meta(root_meta_path, project_dir, new_draft_id, project_name, output_dir)
+
+        # Ler metadados de exportacao se existirem
         export_info = {}
         export_info_path = os.path.join(project_dir, "export_info.json")
         if os.path.exists(export_info_path):
@@ -286,7 +474,9 @@ def import_project(params):
         return {
             "success": True,
             "projectPath": project_dir,
+            "projectName": project_name,
             "draftContentPath": draft_content_path,
+            "draftId": new_draft_id,
             "exportInfo": export_info
         }
 

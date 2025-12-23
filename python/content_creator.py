@@ -120,6 +120,11 @@ def generate_content(params):
     progress_file = params.get('progressFile')
     gerar_imagens = params.get('gerarImagens', True)  # Por padrao gera imagens
 
+    # Novos parametros para modo roteiro manual
+    modo_roteiro = params.get('modoRoteiro', False)  # Se usuario colou o roteiro
+    roteiro_chunks = params.get('roteiroChunks', [])  # Chunks ja divididos pelo frontend
+    gerar_srt = params.get('gerarSRT', False)  # Se deve gerar arquivo SRT
+
     if not api_key:
         return {"success": False, "error": "API Key not provided"}
     if not pasta_saida:
@@ -162,94 +167,126 @@ def generate_content(params):
 
     update_progress(progress_file, 5, "Iniciando...", f"Projeto: {projeto_pasta}", projeto_pasta)
 
-    # ========== PASSO 1: GERAR ROTEIRO ==========
-    update_progress(progress_file, 10, "Gerando roteiro...", project_path=projeto_pasta)
+    # ========== PASSO 1: GERAR/USAR ROTEIRO ==========
+    if modo_roteiro and roteiro_chunks:
+        # Modo roteiro manual - usar chunks fornecidos pelo usuario
+        update_progress(progress_file, 10, "Usando roteiro fornecido...", project_path=projeto_pasta)
 
-    CHUNK_SIZE = 5000
-    num_partes = max(1, (tamanho_roteiro + CHUNK_SIZE - 1) // CHUNK_SIZE)
-    chars_por_parte = tamanho_roteiro // num_partes
+        roteiro_partes = roteiro_chunks
+        roteiro = " ".join(roteiro_partes)
 
-    roteiro_partes = []
-    prompts_roteiro = []
+        # Atualizar documentacao
+        projeto_doc["modo"] = "roteiro_manual"
+        projeto_doc["prompts_enviados"]["roteiro"] = []
+        projeto_doc["respostas"]["roteiro"] = {
+            "texto_final": roteiro,
+            "tamanho_chars": len(roteiro),
+            "partes": len(roteiro_partes),
+            "modo": "manual"
+        }
 
-    for parte_num in range(num_partes):
-        is_primeira = parte_num == 0
-        is_ultima = parte_num == num_partes - 1
+        # Salvar roteiro
+        with open(os.path.join(projeto_pasta, "roteiro.txt"), 'w', encoding='utf-8') as f:
+            f.write(roteiro)
 
-        contexto_anterior = ""
-        if roteiro_partes:
-            contexto_anterior = " ".join(roteiro_partes)[-500:]
+        # Salvar tambem cada parte separadamente para referencia
+        for i, parte in enumerate(roteiro_partes):
+            parte_path = os.path.join(projeto_pasta, f"parte_{i+1:02d}.txt")
+            with open(parte_path, 'w', encoding='utf-8') as f:
+                f.write(parte)
 
-        # Instrucoes por posicao
-        if is_primeira and is_ultima:
-            pos_pt = "Comece de forma impactante e termine com call-to-action"
-            pos_en = "Start with an impactful hook and end with a call-to-action"
-            pos_es = "Comienza de forma impactante y termina con call-to-action"
-        elif is_primeira:
-            pos_pt = "Comece de forma impactante. NAO conclua ainda."
-            pos_en = "Start with an impactful hook. DO NOT conclude yet."
-            pos_es = "Comienza de forma impactante. NO concluyas aun."
-        elif is_ultima:
-            pos_pt = "Continue e termine com call-to-action forte"
-            pos_en = "Continue and end with a strong call-to-action"
-            pos_es = "Continua y termina con un call-to-action fuerte"
-        else:
-            pos_pt = "Continue desenvolvendo. NAO conclua ainda."
-            pos_en = "Continue developing. DO NOT conclude yet."
-            pos_es = "Continua desarrollando. NO concluyas aun."
+        update_progress(progress_file, 15, f"Roteiro: {len(roteiro_partes)} partes ({len(roteiro)} chars)", project_path=projeto_pasta)
 
-        if idioma == "Ingles":
-            prompt = f"""Write a narration script for a video about: {tema}
+    else:
+        # Modo normal - IA gera roteiro
+        update_progress(progress_file, 10, "Gerando roteiro...", project_path=projeto_pasta)
+
+        CHUNK_SIZE = 5000
+        num_partes = max(1, (tamanho_roteiro + CHUNK_SIZE - 1) // CHUNK_SIZE)
+        chars_por_parte = tamanho_roteiro // num_partes
+
+        roteiro_partes = []
+        prompts_roteiro = []
+
+        for parte_num in range(num_partes):
+            is_primeira = parte_num == 0
+            is_ultima = parte_num == num_partes - 1
+
+            contexto_anterior = ""
+            if roteiro_partes:
+                contexto_anterior = " ".join(roteiro_partes)[-500:]
+
+            # Instrucoes por posicao
+            if is_primeira and is_ultima:
+                pos_pt = "Comece de forma impactante e termine com call-to-action"
+                pos_en = "Start with an impactful hook and end with a call-to-action"
+                pos_es = "Comienza de forma impactante y termina con call-to-action"
+            elif is_primeira:
+                pos_pt = "Comece de forma impactante. NAO conclua ainda."
+                pos_en = "Start with an impactful hook. DO NOT conclude yet."
+                pos_es = "Comienza de forma impactante. NO concluyas aun."
+            elif is_ultima:
+                pos_pt = "Continue e termine com call-to-action forte"
+                pos_en = "Continue and end with a strong call-to-action"
+                pos_es = "Continua y termina con un call-to-action fuerte"
+            else:
+                pos_pt = "Continue desenvolvendo. NAO conclua ainda."
+                pos_en = "Continue developing. DO NOT conclude yet."
+                pos_es = "Continua desarrollando. NO concluyas aun."
+
+            if idioma == "Ingles":
+                prompt = f"""Write a narration script for a video about: {tema}
 LENGTH: ~{chars_por_parte} characters. Part {parte_num + 1}/{num_partes}.
 {f'Instructions: {instrucoes}' if instrucoes else ''}
 {f'PREVIOUS CONTEXT: ...{contexto_anterior}' if contexto_anterior else ''}
 RULES: Write ONLY spoken text. NO visual instructions or timestamps. {pos_en}
 Return ONLY narration text in English."""
-        elif idioma == "Espanhol":
-            prompt = f"""Escribe narracion para video sobre: {tema}
+            elif idioma == "Espanhol":
+                prompt = f"""Escribe narracion para video sobre: {tema}
 LONGITUD: ~{chars_por_parte} chars. Parte {parte_num + 1}/{num_partes}.
 {f'Instrucciones: {instrucoes}' if instrucoes else ''}
 {f'CONTEXTO: ...{contexto_anterior}' if contexto_anterior else ''}
 REGLAS: Solo texto hablado. SIN instrucciones visuales. {pos_es}
 Devuelve SOLO narracion en espanol."""
-        else:
-            prompt = f"""Escreva narracao para video sobre: {tema}
+            else:
+                prompt = f"""Escreva narracao para video sobre: {tema}
 TAMANHO: ~{chars_por_parte} chars. Parte {parte_num + 1}/{num_partes}.
 {f'Instrucoes: {instrucoes}' if instrucoes else ''}
 {f'CONTEXTO: ...{contexto_anterior}' if contexto_anterior else ''}
 REGRAS: So texto falado. SEM instrucoes visuais. {pos_pt}
 Retorne APENAS narracao em portugues."""
 
-        # Salvar prompt na documentacao
-        prompts_roteiro.append({
-            "parte": parte_num + 1,
-            "prompt": prompt
-        })
+            # Salvar prompt na documentacao
+            prompts_roteiro.append({
+                "parte": parte_num + 1,
+                "prompt": prompt
+            })
 
-        response = client.models.generate_content(model="gemini-2.0-flash", contents=prompt)
-        api_usage["texto"] += 1
-        roteiro_partes.append(response.text.strip())
+            response = client.models.generate_content(model="gemini-2.0-flash", contents=prompt)
+            api_usage["texto"] += 1
+            roteiro_partes.append(response.text.strip())
 
-        # Salvar resposta na documentacao
-        prompts_roteiro[-1]["resposta"] = response.text.strip()
+            # Salvar resposta na documentacao
+            prompts_roteiro[-1]["resposta"] = response.text.strip()
 
-        if num_partes > 1:
-            update_progress(progress_file, 10 + (10 * (parte_num + 1) / num_partes),
-                          f"Roteiro: parte {parte_num + 1}/{num_partes}", project_path=projeto_pasta)
+            if num_partes > 1:
+                update_progress(progress_file, 10 + (10 * (parte_num + 1) / num_partes),
+                              f"Roteiro: parte {parte_num + 1}/{num_partes}", project_path=projeto_pasta)
 
-    roteiro = " ".join(roteiro_partes)
+        roteiro = " ".join(roteiro_partes)
 
-    # Salvar roteiro
-    with open(os.path.join(projeto_pasta, "roteiro.txt"), 'w', encoding='utf-8') as f:
-        f.write(roteiro)
+        # Salvar roteiro
+        with open(os.path.join(projeto_pasta, "roteiro.txt"), 'w', encoding='utf-8') as f:
+            f.write(roteiro)
 
-    # Atualizar documentacao
-    projeto_doc["prompts_enviados"]["roteiro"] = prompts_roteiro
-    projeto_doc["respostas"]["roteiro"] = {
-        "texto_final": roteiro,
-        "tamanho_chars": len(roteiro),
-        "partes": len(roteiro_partes)
-    }
+        # Atualizar documentacao
+        projeto_doc["modo"] = "ia_gera_roteiro"
+        projeto_doc["prompts_enviados"]["roteiro"] = prompts_roteiro
+        projeto_doc["respostas"]["roteiro"] = {
+            "texto_final": roteiro,
+            "tamanho_chars": len(roteiro),
+            "partes": len(roteiro_partes)
+        }
 
     update_progress(progress_file, 20, f"Roteiro pronto: {len(roteiro)} chars", project_path=projeto_pasta)
 
@@ -331,12 +368,12 @@ Return ONLY prompts, one per line."""
                 full_prompt = prompt_info["prompt_completo"]
                 nome_arquivo = prompt_info["nome_arquivo"]
 
-                # Usar Gemini 2.5 Flash Image (GRATUITO - limite diario, suporta 16:9)
+                # Usar Gemini 2.5 Flash Image (modelo correto para geracao de imagens)
                 img_response = client.models.generate_content(
-                    model="gemini-2.5-flash-preview-image",
+                    model="gemini-2.5-flash-image",
                     contents=f"Generate an image: {full_prompt}",
                     config=types.GenerateContentConfig(
-                        response_modalities=["IMAGE"],
+                        response_modalities=["TEXT", "IMAGE"],
                         image_config=types.ImageConfig(aspect_ratio=aspecto)
                     )
                 )
@@ -350,8 +387,10 @@ Return ONLY prompts, one per line."""
                         with open(img_path, 'wb') as f:
                             f.write(img_data)
                         return True
+                print(f"[IMG-ERROR] {nome_arquivo}: No image data in response", file=sys.stderr)
                 return False
             except Exception as e:
+                print(f"[IMG-ERROR] {nome_arquivo}: {str(e)}", file=sys.stderr)
                 return False
 
         # Processar em lotes de 5
@@ -377,20 +416,26 @@ Return ONLY prompts, one per line."""
     audios_pasta = os.path.join(projeto_pasta, "audios")
     os.makedirs(audios_pasta, exist_ok=True)
 
-    # Dividir em chunks de 2000 chars respeitando pontuacao
-    chunks = []
-    texto_restante = roteiro
-    while texto_restante:
-        if len(texto_restante) <= 2000:
-            chunks.append(texto_restante)
-            break
-        ponto_corte = 2000
-        for i in range(2000, max(1500, 0), -1):
-            if texto_restante[i] in '.!?\n':
-                ponto_corte = i + 1
+    # No modo roteiro manual, usar as partes fornecidas diretamente
+    # No modo IA, dividir em chunks de 2000 chars respeitando pontuacao
+    if modo_roteiro and roteiro_chunks:
+        # Usar as partes do roteiro manual diretamente para o TTS
+        chunks = roteiro_partes
+    else:
+        # Modo IA - dividir o roteiro gerado em chunks para TTS
+        chunks = []
+        texto_restante = roteiro
+        while texto_restante:
+            if len(texto_restante) <= 2000:
+                chunks.append(texto_restante)
                 break
-        chunks.append(texto_restante[:ponto_corte])
-        texto_restante = texto_restante[ponto_corte:].strip()
+            ponto_corte = 2000
+            for i in range(2000, max(1500, 0), -1):
+                if texto_restante[i] in '.!?\n':
+                    ponto_corte = i + 1
+                    break
+            chunks.append(texto_restante[:ponto_corte])
+            texto_restante = texto_restante[ponto_corte:].strip()
 
     # Salvar os textos de cada chunk para referencia
     chunks_info = []
@@ -472,6 +517,8 @@ Return ONLY prompts, one per line."""
     # Juntar apenas as partes que deram certo para o audio completo
     audios_validos = [a for a in audio_chunks if a]
     audio_ok = False
+    audio_durations = []  # Duracao de cada parte em segundos
+
     if audios_validos:
         audio_final = b''.join(audios_validos)
         audio_path = os.path.join(projeto_pasta, "audio_completo.wav")
@@ -481,6 +528,60 @@ Return ONLY prompts, one per line."""
             wav.setframerate(24000)
             wav.writeframes(audio_final)
         audio_ok = True
+
+        # Calcular duracao de cada parte de audio
+        for i, audio_data in enumerate(audio_chunks):
+            if audio_data:
+                # Calcular duracao: bytes / (sample_rate * sample_width * channels)
+                # sample_rate=24000, sample_width=2, channels=1
+                duracao = len(audio_data) / (24000 * 2 * 1)
+                audio_durations.append(duracao)
+            else:
+                audio_durations.append(0)
+
+    # ========== PASSO 4: GERAR SRT (se solicitado) ==========
+    srt_generated = False
+    if gerar_srt and audio_ok and audio_durations:
+        update_progress(progress_file, 98, "Gerando arquivo SRT...", project_path=projeto_pasta)
+
+        def format_srt_time(seconds):
+            """Converte segundos para formato SRT: HH:MM:SS,mmm"""
+            hours = int(seconds // 3600)
+            minutes = int((seconds % 3600) // 60)
+            secs = int(seconds % 60)
+            millis = int((seconds % 1) * 1000)
+            return f"{hours:02d}:{minutes:02d}:{secs:02d},{millis:03d}"
+
+        srt_content = []
+        current_time = 0.0
+
+        for i, chunk_text in enumerate(chunks):
+            if i < len(audio_durations) and audio_durations[i] > 0:
+                start_time = current_time
+                end_time = current_time + audio_durations[i]
+
+                # Adicionar entrada SRT
+                srt_content.append(f"{i + 1}")
+                srt_content.append(f"{format_srt_time(start_time)} --> {format_srt_time(end_time)}")
+                srt_content.append(chunk_text.strip())
+                srt_content.append("")  # Linha em branco
+
+                current_time = end_time
+
+        # Salvar arquivo SRT
+        srt_path = os.path.join(projeto_pasta, "legendas.srt")
+        with open(srt_path, 'w', encoding='utf-8') as f:
+            f.write("\n".join(srt_content))
+
+        srt_generated = True
+
+        # Atualizar documentacao
+        projeto_doc["srt"] = {
+            "gerado": True,
+            "arquivo": srt_path,
+            "total_legendas": len(chunks),
+            "duracao_total": current_time
+        }
 
     # Status final
     partes_ok = len(audios_validos)
@@ -515,6 +616,8 @@ Return ONLY prompts, one per line."""
         "success": True,
         "projectPath": projeto_pasta,
         "scriptLength": len(roteiro),
+        "scriptParts": len(roteiro_partes),
+        "modoRoteiro": modo_roteiro,
         "imagesGenerated": imagens_geradas,
         "imagesRequested": qtd_imagens,
         "imagesSkipped": not gerar_imagens,
@@ -524,6 +627,7 @@ Return ONLY prompts, one per line."""
         "audioPartsTotal": len(chunks),
         "audioErrors": audio_errors,
         "chunksInfo": chunks_info,
+        "srtGenerated": srt_generated,
         "apiUsage": api_usage
     }
 

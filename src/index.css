@@ -131,7 +131,7 @@ select.input option {
 
 .card {
   background: linear-gradient(180deg, #161616 0%, #0e0e0e 100%);
-  border: 1px solid #2A2A2A;
+  border: none;
   border-radius: 0.75rem;
 }
 

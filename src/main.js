@@ -4,7 +4,7 @@ const fs = require('node:fs');
 const http = require('node:http');
 const https = require('node:https');
 const url = require('node:url');
-const { execSync, spawn } = require('node:child_process');
+const { execSync, spawn, spawnSync } = require('node:child_process');
 
 // App version
 const APP_VERSION = '3.2.0';
@@ -28,6 +28,22 @@ function saveSettings(settings) {
   try {
     fs.writeFileSync(settingsPath, JSON.stringify(settings, null, 2));
   } catch (e) { console.error('Error saving settings:', e); }
+}
+
+// Check if CapCut is running
+function isCapCutRunning() {
+  try {
+    // Use tasklist to check for CapCut process
+    const result = execSync('tasklist /FI "IMAGENAME eq CapCut.exe" /NH', {
+      encoding: 'utf-8',
+      windowsHide: true
+    });
+    // If CapCut is running, the output will contain "CapCut.exe"
+    return result.toLowerCase().includes('capcut.exe');
+  } catch (e) {
+    console.error('Error checking CapCut process:', e);
+    return false;
+  }
 }
 
 // ============ AUTO-UPDATE SYSTEM ============
@@ -135,29 +151,61 @@ function runPython(command) {
   // No need for duplicate backup here
 
   try {
+    let args;
+    let tempFile = null;
+
     // Se o comando for muito grande (>7000 chars), usar arquivo temporário
     if (cmdJson.length > 7000) {
       const tempDir = require('os').tmpdir();
-      const tempFile = path.join(tempDir, `capcut_cmd_${Date.now()}.json`);
+      tempFile = path.join(tempDir, `capcut_cmd_${Date.now()}.json`);
       fs.writeFileSync(tempFile, cmdJson, 'utf-8');
       console.log('[Python] Using temp file:', tempFile);
-
-      const result = execSync(`python "${pythonScript}" --file "${tempFile}"`, {
-        encoding: 'utf-8',
-        maxBuffer: 50 * 1024 * 1024 // 50MB
-      });
-
-      // Limpar arquivo temporário
-      try { fs.unlinkSync(tempFile); } catch {}
-
-      return JSON.parse(result);
+      args = [pythonScript, '--file', tempFile];
     } else {
-      const result = execSync(`python "${pythonScript}" "${cmdJson.replace(/"/g, '\\"')}"`, {
-        encoding: 'utf-8',
-        maxBuffer: 50 * 1024 * 1024 // 50MB
-      });
-      return JSON.parse(result);
+      args = [pythonScript, cmdJson];
     }
+
+    // Use spawnSync for better control over stdout/stderr
+    const result = spawnSync('python', args, {
+      encoding: 'utf-8',
+      maxBuffer: 50 * 1024 * 1024 // 50MB
+    });
+
+    // Limpar arquivo temporário se usado
+    if (tempFile) {
+      try { fs.unlinkSync(tempFile); } catch {}
+    }
+
+    // Log stderr (debug info) - always, even on success
+    if (result.stderr && result.stderr.trim()) {
+      console.log('[Python-Debug] ========== SRT DEBUG START ==========');
+      result.stderr.split('\n').forEach(line => {
+        if (line.trim()) console.log('[Python-Debug]', line);
+      });
+      console.log('[Python-Debug] ========== SRT DEBUG END ==========');
+    }
+
+    // Check for error
+    if (result.error) {
+      console.error('[Python] Spawn error:', result.error.message);
+      return { error: result.error.message };
+    }
+
+    if (result.status !== 0) {
+      console.error('[Python] Exit code:', result.status);
+      // Try to parse stdout anyway
+      if (result.stdout) {
+        try {
+          return JSON.parse(result.stdout);
+        } catch {
+          return { error: `Python exited with code ${result.status}` };
+        }
+      }
+      return { error: `Python exited with code ${result.status}` };
+    }
+
+    // Parse successful output
+    return JSON.parse(result.stdout);
   } catch (error) {
     console.error('[Python] Error:', error.message);
     return { error: error.message };
@@ -1107,6 +1155,11 @@ ipcMain.handle('download-update', async (_, downloadUrl) => {
 
 ipcMain.handle('get-app-version', () => APP_VERSION);
 
+// ============ CHECK CAPCUT STATUS ============
+ipcMain.handle('check-capcut-running', () => {
+  return { isRunning: isCapCutRunning() };
+});
+
 // ============ FETCH NEWS ============
 const NEWS_URL = 'https://nardoto.com.br/nardoto-updates/capcut-sync-pro-news.json';
 
@@ -1162,10 +1215,11 @@ ipcMain.handle('loop-audio', async (_, { draftPath, trackIndex, targetDuration }
 });
 
 // ============ INSERT SRT (via Python) ============
-ipcMain.handle('insert-srt', async (_, { draftPath, srtFolders, createTitle, selectedFiles }) => {
+ipcMain.handle('insert-srt', async (_, { draftPath, srtFolders, createTitle, selectedFiles, separateTracks }) => {
   // selectedFiles now contains full paths (srtPath), not just filenames
   // srtFolders is an array of all scanned folders
-  return runPython({ action: 'insert_srt', draftPath, srtFolders, createTitle, selectedFilePaths: selectedFiles });
+  // separateTracks: if true, creates separate track for each audio file's subtitles
+  return runPython({ action: 'insert_srt', draftPath, srtFolders, createTitle, selectedFilePaths: selectedFiles, separateTracks });
 });
 
 // ============ BATCH SRT SCAN (no audio matching) ============
@@ -1200,6 +1254,56 @@ ipcMain.handle('insert-srt-batch', async (_, { draftPath, srtFiles, createTitle,
   // srtFiles is an array of full paths
   // gapMs is the gap between each SRT block in microseconds
   return runPython({ action: 'insert_srt_batch', draftPath, srtFiles, createTitle, gapMs });
+});
+
+// ============ CREATE AND INSERT SRT FROM SCRIPT ============
+ipcMain.handle('create-and-insert-srt', async (_, { draftPath, srtContent, fileName, createTitle }) => {
+  try {
+    // Get project folder (parent of draft_content.json)
+    const projectFolder = path.dirname(draftPath);
+
+    // Create srt subfolder if it doesn't exist
+    const srtFolder = path.join(projectFolder, 'srt');
+    if (!fs.existsSync(srtFolder)) {
+      fs.mkdirSync(srtFolder, { recursive: true });
+    }
+
+    // Generate unique filename
+    const timestamp = Date.now();
+    const safeFileName = fileName.replace(/[^a-zA-Z0-9_-]/g, '_');
+    const srtPath = path.join(srtFolder, `${safeFileName}_${timestamp}.srt`);
+
+    // Save SRT file
+    fs.writeFileSync(srtPath, srtContent, 'utf-8');
+    console.log('[CreateSRT] File saved:', srtPath);
+
+    // Count subtitles
+    const subtitleCount = (srtContent.match(/^\d+$/gm) || []).length;
+
+    // Insert into project using the batch method (single file)
+    const result = runPython({
+      action: 'insert_srt_batch',
+      draftPath,
+      srtFiles: [srtPath],
+      createTitle,
+      gapMs: 0  // No gap needed for single file
+    });
+
+    if (result.error) {
+      return { error: result.error };
+    }
+
+    return {
+      srtPath,
+      stats: {
+        totalSubtitles: subtitleCount,
+        ...result.stats
+      }
+    };
+  } catch (error) {
+    console.error('[CreateSRT] Error:', error);
+    return { error: error.message };
+  }
 });
 
 // ============ INSERT MEDIA BATCH (video/image) ============
@@ -1243,7 +1347,10 @@ ipcMain.handle('start-content-generation', async (_, params) => {
   });
 
   pythonProcess.stderr.on('data', (data) => {
-    stderr += data.toString();
+    const msg = data.toString();
+    stderr += msg;
+    // Log stderr em tempo real para debug
+    console.log('[ContentCreator-Debug]', msg.trim());
   });
 
   // Criar promise para aguardar resultado
@@ -1284,6 +1391,38 @@ ipcMain.handle('wait-content-generation', async (_, progressFile) => {
     runningGenerations.delete(progressFile);
     return result;
   } catch (error) {
+    return { success: false, error: error.message };
+  }
+});
+
+// Cancela uma geracao em andamento
+ipcMain.handle('cancel-content-generation', async (_, progressFile) => {
+  const generation = runningGenerations.get(progressFile);
+  if (!generation) {
+    return { success: false, error: 'Generation not found' };
+  }
+
+  try {
+    // Matar o processo Python
+    if (generation.process && !generation.process.killed) {
+      generation.process.kill('SIGTERM');
+      // Forcar kill se nao morrer em 2 segundos
+      setTimeout(() => {
+        if (generation.process && !generation.process.killed) {
+          generation.process.kill('SIGKILL');
+        }
+      }, 2000);
+    }
+
+    // Limpar arquivos
+    try { fs.unlinkSync(progressFile); } catch {}
+    try { fs.unlinkSync(generation.tempFile); } catch {}
+
+    runningGenerations.delete(progressFile);
+    console.log('[ContentCreator] Generation cancelled');
+    return { success: true, cancelled: true };
+  } catch (error) {
+    console.error('[ContentCreator] Error cancelling:', error);
     return { success: false, error: error.message };
   }
 });
@@ -2946,61 +3085,89 @@ function runProjectManager(params) {
 
 // Export project to ZIP
 ipcMain.handle('export-project', async (_, { draftPath }) => {
+  console.log('[Export] Iniciando export para:', draftPath);
   try {
-    // Open save dialog
-    const { dialog } = require('electron');
+    // Pegar nome do projeto
     const projectName = path.basename(path.dirname(draftPath));
-    const result = await dialog.showSaveDialog(mainWindow, {
-      title: 'Exportar Projeto',
-      defaultPath: `${projectName}.zip`,
-      filters: [{ name: 'ZIP Archive', extensions: ['zip'] }]
-    });
+    console.log('[Export] Nome do projeto:', projectName);
+
+    // Pegar janela ativa
+    const parentWindow = mainWindow || BrowserWindow.getFocusedWindow();
+    console.log('[Export] Janela disponivel:', !!parentWindow);
+
+    const dialogOptions = {
+      title: 'Salvar Projeto Exportado',
+      defaultPath: path.join(app.getPath('desktop'), `${projectName}_export.zip`),
+      filters: [{ name: 'Arquivo ZIP', extensions: ['zip'] }],
+      buttonLabel: 'Exportar'
+    };
+
+    // Mostrar dialog de salvar
+    const result = await dialog.showSaveDialog(parentWindow, dialogOptions);
+    console.log('[Export] Resultado do dialog:', result);
 
     if (result.canceled || !result.filePath) {
+      console.log('[Export] Usuario cancelou');
       return { success: false, canceled: true };
     }
 
+    console.log('[Export] Salvando em:', result.filePath);
     return runProjectManager({
       action: 'export',
       draftPath: path.dirname(draftPath),
       outputPath: result.filePath
     });
   } catch (error) {
+    console.error('[Export] Erro:', error);
     return { success: false, error: error.message };
   }
 });
 
 // Import project from ZIP
 ipcMain.handle('import-project', async () => {
+  console.log('[Import] Iniciando importacao...');
   try {
-    const { dialog } = require('electron');
+    // Pegar janela ativa
+    const parentWindow = mainWindow || BrowserWindow.getFocusedWindow();
 
-    // Open file dialog to select ZIP
-    const fileResult = await dialog.showOpenDialog(mainWindow, {
-      title: 'Importar Projeto',
-      filters: [{ name: 'ZIP Archive', extensions: ['zip'] }],
-      properties: ['openFile']
+    // Abrir dialog para selecionar ZIP
+    const fileResult = await dialog.showOpenDialog(parentWindow, {
+      title: 'Selecionar Projeto para Importar',
+      filters: [{ name: 'Arquivo ZIP', extensions: ['zip'] }],
+      properties: ['openFile'],
+      buttonLabel: 'Importar'
     });
 
     if (fileResult.canceled || !fileResult.filePaths.length) {
+      console.log('[Import] Usuario cancelou');
       return { success: false, canceled: true };
     }
 
     const zipPath = fileResult.filePaths[0];
+    console.log('[Import] ZIP selecionado:', zipPath);
 
-    // Get CapCut projects folder
+    // Pasta de projetos do CapCut
     const capCutDrafts = path.join(app.getPath('appData'), '..', 'Local', 'CapCut', 'User Data', 'Projects', 'com.lveditor.draft');
+    const rootMetaPath = path.join(capCutDrafts, 'root_meta_info.json');
 
     if (!fs.existsSync(capCutDrafts)) {
       return { success: false, error: 'Pasta de projetos do CapCut nao encontrada' };
     }
 
-    return runProjectManager({
+    console.log('[Import] Pasta CapCut:', capCutDrafts);
+
+    // Chamar Python para importar
+    const result = await runProjectManager({
       action: 'import',
       zipPath,
-      outputDir: capCutDrafts
+      outputDir: capCutDrafts,
+      rootMetaPath
     });
+
+    console.log('[Import] Resultado:', result);
+    return result;
   } catch (error) {
+    console.error('[Import] Erro:', error);
     return { success: false, error: error.message };
   }
 });

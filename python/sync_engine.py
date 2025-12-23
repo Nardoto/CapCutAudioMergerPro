@@ -117,22 +117,61 @@ def create_backup(file_path):
         f.write(content)
     return backup_path
 
-def parse_srt(filepath):
+def parse_srt(filepath, debug=True):
+    """
+    Parse SRT file and return list of subtitles.
+    debug=True will print detailed logging to stderr for debugging.
+    """
     legendas = []
     try:
         with open(filepath, 'r', encoding='utf-8') as f:
             content = f.read()
+        if debug:
+            print(f"[SRT-DEBUG] File: {os.path.basename(filepath)}", file=sys.stderr)
+            print(f"[SRT-DEBUG] Encoding: UTF-8", file=sys.stderr)
     except:
         with open(filepath, 'r', encoding='latin-1') as f:
             content = f.read()
+        if debug:
+            print(f"[SRT-DEBUG] File: {os.path.basename(filepath)}", file=sys.stderr)
+            print(f"[SRT-DEBUG] Encoding: Latin-1 (fallback)", file=sys.stderr)
+
+    if debug:
+        print(f"[SRT-DEBUG] Content length: {len(content)} chars", file=sys.stderr)
+        # Show first 500 chars for debugging
+        preview = content[:500].replace('\n', '\\n').replace('\r', '\\r')
+        print(f"[SRT-DEBUG] Preview: {preview}...", file=sys.stderr)
+
+    # Normalize line endings to \n
+    content = content.replace('\r\n', '\n').replace('\r', '\n')
+
+    # Pattern that captures: index, timestamps, and text
     pattern = r'(\d+)\s*\n(\d{2}):(\d{2}):(\d{2})[,.](\d{3})\s*-->\s*(\d{2}):(\d{2}):(\d{2})[,.](\d{3})\s*\n([\s\S]*?)(?=\n\n|\n\d+\s*\n|$)'
-    for match in re.findall(pattern, content):
+
+    matches = re.findall(pattern, content)
+    if debug:
+        print(f"[SRT-DEBUG] Found {len(matches)} matches", file=sys.stderr)
+
+    for i, match in enumerate(matches):
         idx, h1, m1, s1, ms1, h2, m2, s2, ms2, text = match
         start_us = (int(h1) * 3600 + int(m1) * 60 + int(s1)) * 1000000 + int(ms1) * 1000
         end_us = (int(h2) * 3600 + int(m2) * 60 + int(s2)) * 1000000 + int(ms2) * 1000
+        original_text = text
         text = text.strip().replace('\n', ' ')
+
+        if debug:
+            print(f"[SRT-DEBUG] #{idx}: start={start_us/1000000:.2f}s, dur={(end_us-start_us)/1000000:.2f}s", file=sys.stderr)
+            print(f"[SRT-DEBUG] #{idx} original: '{original_text[:100]}{'...' if len(original_text) > 100 else ''}'", file=sys.stderr)
+            print(f"[SRT-DEBUG] #{idx} cleaned:  '{text[:100]}{'...' if len(text) > 100 else ''}'", file=sys.stderr)
+
         if text and end_us > start_us:
             legendas.append({'start': start_us, 'duration': end_us - start_us, 'text': text})
+        elif debug:
+            print(f"[SRT-DEBUG] #{idx} SKIPPED - empty text or invalid duration", file=sys.stderr)
+
+    if debug:
+        print(f"[SRT-DEBUG] Parsed {len(legendas)} valid subtitles", file=sys.stderr)
+
     return legendas
 
 def limpar_nome_musica(nome):
@@ -508,7 +547,7 @@ def loop_audio(draft_path, track_index, target_duration):
     except Exception as e:
         return {'error': str(e)}
 
-def insert_srt(draft_path, srt_folders=None, create_title=True, selected_file_paths=None, srt_folder=None, selected_files=None):
+def insert_srt(draft_path, srt_folders=None, create_title=True, selected_file_paths=None, srt_folder=None, selected_files=None, separate_tracks=False):
     """
     Insere legendas SRT na timeline.
 
@@ -519,6 +558,7 @@ def insert_srt(draft_path, srt_folders=None, create_title=True, selected_file_pa
         selected_file_paths: Lista de CAMINHOS COMPLETOS dos arquivos .srt a inserir (novo formato)
         srt_folder: Pasta única (formato antigo, para compatibilidade)
         selected_files: Lista de nomes de arquivos (formato antigo, para compatibilidade)
+        separate_tracks: Se True, cria uma track separada para cada áudio (padrão: False = todos na mesma track)
     """
     try:
         logs = []
@@ -538,6 +578,7 @@ def insert_srt(draft_path, srt_folders=None, create_title=True, selected_file_pa
         total, mats, spds = 0, [], []
         all_subtitle_segs = []  # Todos os segmentos de legenda em uma única lista
         all_title_segs = []     # Títulos separados (podem sobrepor legendas)
+        separate_subtitle_tracks = []  # Lista de listas, uma para cada áudio (quando separate_tracks=True)
 
         # NOVO FORMATO: Se selected_file_paths foi fornecido, usar caminhos completos
         if selected_file_paths:
@@ -564,12 +605,20 @@ def insert_srt(draft_path, srt_folders=None, create_title=True, selected_file_pa
                 # Legendas do SRT
                 if os.path.exists(srt_path):
                     gid = f"imp_{int(datetime.now().timestamp()*1000)}_{i}"
+                    current_audio_segs = []  # Legendas deste áudio específico
                     for leg in parse_srt(srt_path):
                         if leg['start'] + leg['duration'] <= a['duration']:
                             mid, m = criar_material_texto(leg['text'], 5.0, True, gid)
                             mats.append(m)
                             sg, sp = criar_segmento_texto(mid, a['start'] + leg['start'], leg['duration'], -0.75)
-                            all_subtitle_segs.append(sg); spds.append(sp); total += 1
+                            if separate_tracks:
+                                current_audio_segs.append(sg)
+                            else:
+                                all_subtitle_segs.append(sg)
+                            spds.append(sp)
+                            total += 1
+                    if separate_tracks and current_audio_segs:
+                        separate_subtitle_tracks.append(current_audio_segs)
 
         # FORMATO ANTIGO: Para compatibilidade com chamadas antigas
         elif srt_folder:
@@ -599,19 +648,31 @@ def insert_srt(draft_path, srt_folders=None, create_title=True, selected_file_pa
 
                 if os.path.exists(srt_path):
                     gid = f"imp_{int(datetime.now().timestamp()*1000)}_{i}"
+                    current_audio_segs = []  # Legendas deste áudio específico
                     for leg in parse_srt(srt_path):
                         if leg['start'] + leg['duration'] <= a['duration']:
                             mid, m = criar_material_texto(leg['text'], 5.0, True, gid)
                             mats.append(m)
                             sg, sp = criar_segmento_texto(mid, a['start'] + leg['start'], leg['duration'], -0.75)
-                            all_subtitle_segs.append(sg); spds.append(sp); total += 1
+                            if separate_tracks:
+                                current_audio_segs.append(sg)
+                            else:
+                                all_subtitle_segs.append(sg)
+                            spds.append(sp)
+                            total += 1
+                    if separate_tracks and current_audio_segs:
+                        separate_subtitle_tracks.append(current_audio_segs)
         else:
             return {'error': 'Nenhuma pasta ou arquivo SRT especificado'}
 
         # Criar tracks: uma para legendas, uma para títulos (se houver)
         # IMPORTANTE: CapCut só reconhece tipos "video", "audio", "text" - NÃO usar "subtitle"
         tracks = []
-        if all_subtitle_segs:
+        if separate_tracks and separate_subtitle_tracks:
+            # Criar uma track para cada áudio
+            for track_segs in separate_subtitle_tracks:
+                tracks.append({"attribute": 0, "flag": 1, "id": str(uuid.uuid4()).upper(), "is_default_name": True, "name": "", "segments": track_segs, "type": "text"})
+        elif all_subtitle_segs:
             tracks.append({"attribute": 0, "flag": 1, "id": str(uuid.uuid4()).upper(), "is_default_name": True, "name": "", "segments": all_subtitle_segs, "type": "text"})
         if all_title_segs:
             tracks.append({"attribute": 0, "flag": 1, "id": str(uuid.uuid4()).upper(), "is_default_name": True, "name": "", "segments": all_title_segs, "type": "text"})
@@ -1564,7 +1625,8 @@ def insert_creator_content(draft_path, content_folder, add_animations=True):
 
         # Verificar arquivos do conteúdo
         images_folder = os.path.join(content_folder, 'imagens')
-        audio_file = os.path.join(content_folder, 'audio.wav')
+        audios_folder = os.path.join(content_folder, 'audios')
+        audio_completo_file = os.path.join(content_folder, 'audio_completo.wav')
 
         if not os.path.exists(images_folder):
             return {'error': f'Pasta de imagens não encontrada: {images_folder}'}
@@ -1581,19 +1643,43 @@ def insert_creator_content(draft_path, content_folder, add_animations=True):
 
         logs.append(f"[INFO] {len(image_files)} imagens encontradas")
 
-        # Obter duração do áudio
+        # Verificar partes de áudio individuais
+        audio_parts = []
+        if os.path.exists(audios_folder):
+            audio_parts = sorted([
+                os.path.join(audios_folder, f)
+                for f in os.listdir(audios_folder)
+                if f.lower().startswith('parte_') and f.lower().endswith('.wav')
+            ])
+
+        # Calcular duração total do áudio (partes ou completo)
         audio_duration = 0
-        if os.path.exists(audio_file):
+        audio_parts_info = []  # Lista de (path, duration) para cada parte
+
+        if audio_parts:
+            import wave
+            for part_path in audio_parts:
+                try:
+                    with wave.open(part_path, 'rb') as wav:
+                        frames = wav.getnframes()
+                        rate = wav.getframerate()
+                        part_duration = int((frames / rate) * 1000000)  # microseconds
+                        audio_parts_info.append((part_path, part_duration))
+                        audio_duration += part_duration
+                except Exception as e:
+                    logs.append(f"[WARN] Erro ao ler {os.path.basename(part_path)}: {e}")
+            logs.append(f"[INFO] {len(audio_parts_info)} partes de áudio ({audio_duration/1000000:.2f}s total)")
+        elif os.path.exists(audio_completo_file):
             try:
                 import wave
-                with wave.open(audio_file, 'rb') as wav:
+                with wave.open(audio_completo_file, 'rb') as wav:
                     frames = wav.getnframes()
                     rate = wav.getframerate()
                     audio_duration = int((frames / rate) * 1000000)  # microseconds
-                logs.append(f"[INFO] Áudio: {audio_duration/1000000:.2f}s")
+                    audio_parts_info.append((audio_completo_file, audio_duration))
+                logs.append(f"[INFO] Áudio completo: {audio_duration/1000000:.2f}s")
             except Exception as e:
                 logs.append(f"[WARN] Erro ao ler áudio: {e}")
-                # Fallback: 5 segundos por imagem
                 audio_duration = len(image_files) * 5000000
         else:
             # Sem áudio: 5 segundos por imagem
@@ -1672,8 +1758,8 @@ def insert_creator_content(draft_path, content_folder, add_animations=True):
 
         logs.append(f"[+] {len(image_files)} imagens inseridas")
 
-        # Inserir áudio se existir
-        if os.path.exists(audio_file):
+        # Inserir áudio se existir (partes individuais ou completo)
+        if audio_parts_info:
             # Criar track de áudio
             audio_track_idx = None
             for idx, track in enumerate(projeto.get('tracks', [])):
@@ -1689,22 +1775,27 @@ def insert_creator_content(draft_path, content_folder, add_animations=True):
                 audio_track_idx = len(projeto['tracks']) - 1
                 logs.append("[+] Track de áudio criada")
 
-            # Criar material de áudio
-            mat_id, local_mat_id, audio_mat = criar_material_audio(audio_file, audio_duration)
-            projeto['materials'].setdefault('audios', []).append(audio_mat)
+            # Inserir cada parte de áudio
+            audio_time = start_time
+            for part_path, part_duration in audio_parts_info:
+                # Criar material de áudio
+                mat_id, local_mat_id, audio_mat = criar_material_audio(part_path, part_duration)
+                projeto['materials'].setdefault('audios', []).append(audio_mat)
 
-            # Criar materiais auxiliares do áudio
-            aux = criar_materiais_auxiliares_audio()
-            projeto['materials'].setdefault('speeds', []).append(aux['speed'])
-            projeto['materials'].setdefault('placeholder_infos', []).append(aux['placeholder'])
-            projeto['materials'].setdefault('beats', []).append(aux['beat'])
-            projeto['materials'].setdefault('sound_channel_mappings', []).append(aux['channel'])
-            projeto['materials'].setdefault('vocal_separations', []).append(aux['vocal'])
+                # Criar materiais auxiliares do áudio
+                aux = criar_materiais_auxiliares_audio()
+                projeto['materials'].setdefault('speeds', []).append(aux['speed'])
+                projeto['materials'].setdefault('placeholder_infos', []).append(aux['placeholder'])
+                projeto['materials'].setdefault('beats', []).append(aux['beat'])
+                projeto['materials'].setdefault('sound_channel_mappings', []).append(aux['channel'])
+                projeto['materials'].setdefault('vocal_separations', []).append(aux['vocal'])
 
-            # Criar segmento de áudio
-            audio_segment = criar_segmento_audio(mat_id, start_time, audio_duration, aux['refs'])
-            projeto['tracks'][audio_track_idx]['segments'].append(audio_segment)
-            logs.append(f"[+] Áudio inserido ({audio_duration/1000000:.2f}s)")
+                # Criar segmento de áudio
+                audio_segment = criar_segmento_audio(mat_id, audio_time, part_duration, aux['refs'])
+                projeto['tracks'][audio_track_idx]['segments'].append(audio_segment)
+                audio_time += part_duration
+
+            logs.append(f"[+] {len(audio_parts_info)} áudio(s) inserido(s) ({audio_duration/1000000:.2f}s total)")
 
         # Atualizar duração do projeto
         if current_time > projeto.get('duration', 0):
@@ -1721,7 +1812,8 @@ def insert_creator_content(draft_path, content_folder, add_animations=True):
             'logs': logs,
             'stats': {
                 'imagesInserted': len(image_files),
-                'audioInserted': os.path.exists(audio_file),
+                'audioInserted': len(audio_parts_info) > 0,
+                'audioPartsInserted': len(audio_parts_info),
                 'totalDuration': current_time
             }
         }
@@ -1746,7 +1838,7 @@ if __name__ == '__main__':
         elif action == 'sync': r = sync_project(cmd['draftPath'], cmd.get('audioTrackIndex', 0), cmd.get('mode', 'audio'), cmd.get('syncSubtitles', True), cmd.get('applyAnimations', False))
         elif action == 'loop_video': r = loop_video(cmd['draftPath'], cmd.get('audioTrackIndex', 0), cmd.get('order', 'random'))
         elif action == 'loop_audio': r = loop_audio(cmd['draftPath'], cmd['trackIndex'], cmd['targetDuration'])
-        elif action == 'insert_srt': r = insert_srt(cmd['draftPath'], cmd.get('srtFolders'), cmd.get('createTitle', True), cmd.get('selectedFilePaths'), cmd.get('srtFolder'), cmd.get('selectedFiles'))
+        elif action == 'insert_srt': r = insert_srt(cmd['draftPath'], cmd.get('srtFolders'), cmd.get('createTitle', True), cmd.get('selectedFilePaths'), cmd.get('srtFolder'), cmd.get('selectedFiles'), cmd.get('separateTracks', False))
         elif action == 'insert_srt_batch': r = insert_srt_batch(cmd['draftPath'], cmd.get('srtFiles', []), cmd.get('createTitle', True), cmd.get('gapMs', 2000000))
         elif action == 'insert_media': r = insert_media_batch(cmd['draftPath'], cmd.get('mediaFiles', []), cmd.get('imageDuration', 5000000))
         elif action == 'insert_audio': r = insert_audio_batch(cmd['draftPath'], cmd.get('audioFiles', []), cmd.get('useExistingTrack', False), cmd.get('trackIndex'))
