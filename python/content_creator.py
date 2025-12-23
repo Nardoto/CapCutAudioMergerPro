@@ -336,7 +336,8 @@ Return ONLY prompts, one per line."""
 
     for index, prompt in enumerate(prompts_lista):
         full_prompt = f"{style_prefix} {prompt}, {style_suffix}"
-        nome_arquivo = f"{index+1:02d}_{limpar_nome_arquivo(full_prompt)}.png"
+        # Usar nome curto para evitar problemas com limite de 260 caracteres do Windows
+        nome_arquivo = f"TAKE_{index+1:02d}.png"
 
         prompt_info = {
             "index": index + 1,
