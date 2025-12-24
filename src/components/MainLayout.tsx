@@ -1,6 +1,6 @@
 import { useState, useEffect, useRef } from 'react'
 import { motion, AnimatePresence } from 'framer-motion'
-import { Zap, RefreshCw, FileText, HelpCircle, LogOut, FolderOpen, ChevronRight, Minus, Square, X, Download, ExternalLink, User as UserIcon, Crown, Undo2, Search, Clock, ChevronDown, Trash2, Film, Plus, Pencil, Check, Copy, Cloud, Layers, Sparkles, Mic, Upload, FileArchive } from 'lucide-react'
+import { Zap, RefreshCw, FileText, HelpCircle, LogOut, FolderOpen, ChevronRight, Minus, Square, X, Download, ExternalLink, User as UserIcon, Crown, Undo2, Search, Clock, ChevronDown, Trash2, Film, Plus, Pencil, Check, Copy, Cloud, Layers, Sparkles, Mic, Upload, FileArchive, AlertTriangle } from 'lucide-react'
 import type { User, TrackInfo, LogEntry } from '../types'
 import capcutLogo from '../assets/capcut-logo.jpg'
 import nardotoLogoVideo from '../assets/logo-nardoto-animacao.mp4'
@@ -71,6 +71,7 @@ export default function MainLayout({ user, onLogout }: MainLayoutProps) {
   const [showImportPreview, setShowImportPreview] = useState(false)
   const [importFolderPath, setImportFolderPath] = useState<string | null>(null)
   const [importMedia, setImportMedia] = useState<{ images: string[]; videos: string[]; audios: string[]; subtitles?: string[] } | null>(null)
+  const [importPathWarning, setImportPathWarning] = useState<{ hasLongPaths: boolean; nearLimit: boolean; longestPathLength: number; pathsExceedingLimit: number } | null>(null)
   const [importAddAnimations, setImportAddAnimations] = useState(true)
   const [importSyncToAudio, setImportSyncToAudio] = useState(true)
   const [importSeparateAudioTracks, setImportSeparateAudioTracks] = useState(false)
@@ -648,6 +649,7 @@ export default function MainLayout({ user, onLogout }: MainLayoutProps) {
       // Mostrar preview
       setImportFolderPath(folderPath)
       setImportMedia(result.media)
+      setImportPathWarning(result.pathWarning || null)
       setShowImportPreview(true)
       addLog('info', `Encontrados: ${result.media.images.length} img, ${result.media.videos.length} vid, ${result.media.audios.length} aud`)
     } catch (error) {
@@ -724,6 +726,7 @@ export default function MainLayout({ user, onLogout }: MainLayoutProps) {
         setShowImportPreview(false)
         setImportFolderPath(null)
         setImportMedia(null)
+        setImportPathWarning(null)
         setImportIsNewProject(false)
         setImportSeparateAudioTracks(false)
 
@@ -804,6 +807,7 @@ export default function MainLayout({ user, onLogout }: MainLayoutProps) {
         audios: scanResult.audios,
         subtitles: scanResult.subtitles || []
       })
+      setImportPathWarning(scanResult.pathWarning || null)
       setImportIsNewProject(true)  // Indica que vai criar projeto antes de importar
       setShowImportPreview(true)
     } catch (error) {
@@ -2495,7 +2499,7 @@ export default function MainLayout({ user, onLogout }: MainLayoutProps) {
               animate={{ opacity: 1 }}
               exit={{ opacity: 0 }}
               className="fixed inset-0 bg-black/80 z-[60]"
-              onClick={() => { setShowImportPreview(false); setImportIsNewProject(false); setImportSeparateAudioTracks(false); }}
+              onClick={() => { setShowImportPreview(false); setImportIsNewProject(false); setImportSeparateAudioTracks(false); setImportPathWarning(null); }}
             />
             <motion.div
               initial={{ opacity: 0, scale: 0.95 }}
@@ -2515,6 +2519,27 @@ export default function MainLayout({ user, onLogout }: MainLayoutProps) {
                   <p className="text-[10px] text-text-muted truncate">{importFolderPath?.split(/[/\\]/).pop()}</p>
                 </div>
               </div>
+
+              {/* Path Length Warning */}
+              {importPathWarning && (
+                <div className={`mx-3 mt-3 p-3 rounded-lg border ${importPathWarning.hasLongPaths ? 'bg-red-500/20 border-red-500/50' : 'bg-yellow-500/20 border-yellow-500/50'}`}>
+                  <div className="flex items-start gap-2">
+                    <AlertTriangle className={`w-4 h-4 flex-shrink-0 mt-0.5 ${importPathWarning.hasLongPaths ? 'text-red-400' : 'text-yellow-400'}`} />
+                    <div className="flex-1">
+                      <p className={`text-xs font-medium ${importPathWarning.hasLongPaths ? 'text-red-300' : 'text-yellow-300'}`}>
+                        {importPathWarning.hasLongPaths
+                          ? `AVISO: ${importPathWarning.pathsExceedingLimit} arquivo(s) com caminho muito longo!`
+                          : 'Caminhos de arquivo longos detectados'}
+                      </p>
+                      <p className="text-[10px] text-gray-400 mt-1">
+                        {importPathWarning.hasLongPaths
+                          ? 'O CapCut pode não encontrar as mídias. Renomeie a pasta para um nome mais curto.'
+                          : `Caminho mais longo: ${importPathWarning.longestPathLength} caracteres (limite: 260)`}
+                      </p>
+                    </div>
+                  </div>
+                </div>
+              )}
 
               {/* Content - Lista de arquivos */}
               <div className="flex-1 overflow-y-auto p-3 space-y-3">
@@ -2616,7 +2641,7 @@ export default function MainLayout({ user, onLogout }: MainLayoutProps) {
               {/* Footer */}
               <div className="p-3 border-t border-border-light flex gap-2 flex-shrink-0">
                 <button
-                  onClick={() => { setShowImportPreview(false); setImportIsNewProject(false); setImportSeparateAudioTracks(false); }}
+                  onClick={() => { setShowImportPreview(false); setImportIsNewProject(false); setImportSeparateAudioTracks(false); setImportPathWarning(null); }}
                   className="flex-1 btn-secondary py-2 text-xs"
                   disabled={isImporting}
                 >

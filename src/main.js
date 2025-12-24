@@ -1570,14 +1570,29 @@ ipcMain.handle('scan-media-folder', async (_, folderPath) => {
     const VIDEO_EXTS = ['.mp4', '.mov', '.avi', '.mkv', '.webm', '.m4v'];
     const AUDIO_EXTS = ['.wav', '.mp3', '.m4a', '.aac', '.ogg', '.flac'];
     const SUBTITLE_EXTS = ['.srt', '.vtt', '.ass', '.sub'];
+    const MAX_PATH_LENGTH = 260; // Windows MAX_PATH limit
 
     const files = fs.readdirSync(folderPath);
     const media = { images: [], videos: [], audios: [], subtitles: [] };
+
+    // Track path length issues
+    let longestPath = '';
+    let longestPathLength = 0;
+    let pathsExceedingLimit = 0;
 
     for (const f of files) {
       const fullPath = path.join(folderPath, f);
       if (!fs.statSync(fullPath).isFile()) continue;
       const ext = path.extname(f).toLowerCase();
+
+      // Check path length
+      if (fullPath.length > longestPathLength) {
+        longestPath = fullPath;
+        longestPathLength = fullPath.length;
+      }
+      if (fullPath.length >= MAX_PATH_LENGTH) {
+        pathsExceedingLimit++;
+      }
 
       if (IMAGE_EXTS.includes(ext)) media.images.push(f);
       else if (VIDEO_EXTS.includes(ext)) media.videos.push(f);
@@ -1591,6 +1606,19 @@ ipcMain.handle('scan-media-folder', async (_, folderPath) => {
     media.audios.sort((a, b) => a.toLowerCase().localeCompare(b.toLowerCase()));
     media.subtitles.sort((a, b) => a.toLowerCase().localeCompare(b.toLowerCase()));
 
+    // Build path warning if needed
+    let pathWarning = null;
+    if (pathsExceedingLimit > 0 || longestPathLength > 230) {
+      pathWarning = {
+        hasLongPaths: pathsExceedingLimit > 0,
+        nearLimit: longestPathLength > 230 && longestPathLength < MAX_PATH_LENGTH,
+        longestPath,
+        longestPathLength,
+        pathsExceedingLimit,
+        maxAllowed: MAX_PATH_LENGTH
+      };
+    }
+
     return {
       success: true,
       folderPath,
@@ -1600,7 +1628,8 @@ ipcMain.handle('scan-media-folder', async (_, folderPath) => {
       videos: media.videos,
       audios: media.audios,
       subtitles: media.subtitles,
-      total: media.images.length + media.videos.length + media.audios.length + media.subtitles.length
+      total: media.images.length + media.videos.length + media.audios.length + media.subtitles.length,
+      pathWarning
     };
   } catch (error) {
     return { success: false, error: error.message, images: [], videos: [], audios: [], subtitles: [] };
